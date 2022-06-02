@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf};
+use std::{fmt, path::PathBuf, str::FromStr};
 
 use time::{format_description::FormatItem, macros::format_description, OffsetDateTime, UtcOffset};
 use tokio::{fs::File, io::AsyncWriteExt};
@@ -37,20 +37,21 @@ impl fmt::Display for Oodle {
 		write!(f, "-= {} =-\n", self.name)?;
 
 		for msg in &self.messages {
-			write!(f, "\n{}", msg)?;
+			write!(f, "\n{}.\n", msg)?;
 		}
 
 		Ok(())
 	}
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Message {
 	pub date: OffsetDateTime,
 	pub content: String,
 }
 
 impl Message {
-	const TIME_FORMAT: &'static[FormatItem<'static>] = format_description!("[year padding:zero repr:full base:calendar sign:automatic]-[month padding:zero repr:numerical]-[day padding:zero] [hour padding:zero repr:24]:[minute padding:zero]:[second padding:zero][offset_hour padding:none sign:mandatory][offset_minute padding:zero]");
+	const TIME_FORMAT: &'static[FormatItem<'static>] = format_description!("[year padding:zero repr:full base:calendar sign:automatic]-[month padding:zero repr:numerical]-[day padding:zero] [hour padding:zero repr:24]:[minute padding:zero]:[second padding:zero][offset_hour padding:zero sign:mandatory][offset_minute padding:zero]");
 
 	pub fn new_now(message: String, offset: UtcOffset) -> Self {
 		Self {
@@ -78,12 +79,49 @@ impl fmt::Display for Message {
 			}
 		}
 
-		write!(f, ".\n")
+		Ok(())
+	}
+}
+
+impl FromStr for Message {
+	//TODO: gen- a more descriptive error
+	type Err = ();
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let mut lines = s.lines();
+
+		let date = if let Some(datetime) = lines.next() {
+			//TODO: gen- return an error rather than panic
+			match OffsetDateTime::parse(datetime, Self::TIME_FORMAT) {
+				Ok(dt) => dt,
+				Err(e) => panic!("{}", e),
+			}
+		} else {
+			// No datetime present! *(/nothing/ present)
+			return Err(());
+		};
+
+		let mut content = String::new();
+		for line in lines {
+			if line == ".." {
+				content.push_str(".\n");
+			} else {
+				content.push_str(line);
+				content.push('\n');
+			}
+		}
+
+		Ok(Self {
+			date,
+			content: content.trim().to_owned(),
+		})
 	}
 }
 
 #[cfg(test)]
 mod test {
+	use std::str::FromStr;
+
 	use time::macros::datetime;
 
 	use crate::{Message, Oodle};
@@ -96,9 +134,21 @@ mod test {
 		};
 
 		let expected =
-			"2022-06-01 13:45:00-500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n";
+			"2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n";
 
 		assert_eq!(format!("{}", message), expected)
+	}
+
+	#[test]
+	fn message_parses_correctly() {
+		let message = Message {
+			date: datetime!(2022-06-01 13:45 -5),
+			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
+		};
+
+		let expected = "2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!";
+
+		assert_eq!(Message::from_str(expected), Ok(message))
 	}
 
 	#[test]
@@ -114,7 +164,7 @@ mod test {
 		};
 
 		let expected =
-			"-= Hey, I'm a title! =-\n\n2022-06-01 13:45:00-500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-500\nLooky here another message!\n.\n";
+			"-= Hey, I'm a title! =-\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500\nLooky here another message!\n.\n";
 
 		let mut ood = Oodle::new("Hey, I'm a title!", "/tmp/nothing.oodle", message);
 		ood.push_message(message2);
