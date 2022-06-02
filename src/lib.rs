@@ -3,6 +3,7 @@ use std::{fmt, path::PathBuf, str::FromStr};
 use time::{format_description::FormatItem, macros::format_description, OffsetDateTime, UtcOffset};
 use tokio::{fs::File, io::AsyncWriteExt};
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Oodle {
 	name: String,
 	file: PathBuf,
@@ -30,6 +31,16 @@ impl Oodle {
 		let mut file = File::create(&self.file).await?;
 		file.write(format!("{}", self).as_bytes()).await.map(|_| ())
 	}
+
+	fn extract_title(s: &str) -> Option<String> {
+		if let Some(s) = s.strip_prefix("-=") {
+			if let Some(title) = s.strip_suffix("=-") {
+				return Some(title.trim().to_owned());
+			}
+		}
+
+		None
+	}
 }
 
 impl fmt::Display for Oodle {
@@ -41,6 +52,52 @@ impl fmt::Display for Oodle {
 		}
 
 		Ok(())
+	}
+}
+
+impl FromStr for Oodle {
+	//TODO: gen- real error
+	type Err = ();
+
+	fn from_str(mut s: &str) -> Result<Self, Self::Err> {
+		let title = match s.find("\n\n") {
+			Some(idx) => match Self::extract_title(&s[..idx]) {
+				Some(title) => {
+					s = &s[idx + 2..];
+					title
+				}
+				None => {
+					//TODO:gen- title malformed
+					todo!()
+				}
+			},
+			None => {
+				//TODO:gen- No title was present.
+				todo!()
+			}
+		};
+
+		let mut messages: Vec<Message> = vec![];
+
+		loop {
+			match s.find("\n.\n") {
+				Some(idx) => {
+					messages.push(s[..idx].trim().parse()?);
+					s = &s[idx + 3..];
+				}
+				None => break,
+			}
+		}
+
+		if !s.trim().is_empty() {
+			messages.push(s.trim().parse()?);
+		}
+
+		Ok(Self {
+			name: title,
+			file: PathBuf::from("/tmp"),
+			messages,
+		})
 	}
 }
 
@@ -170,5 +227,26 @@ mod test {
 		ood.push_message(message2);
 
 		assert_eq!(format!("{}", ood), expected)
+	}
+
+	#[test]
+	fn oodle_parses_correctly() {
+		let message = Message {
+			date: datetime!(2022-06-01 13:45 -5),
+			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
+		};
+
+		let message2 = Message {
+			date: datetime!(2022-06-01 14:15 -5),
+			content: String::from("Looky here another message!"),
+		};
+
+		let expected =
+			"-= Hey, I'm a title! =-\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500\nLooky here another message!\n.\n";
+
+		let mut ood = Oodle::new("Hey, I'm a title!", "/tmp", message);
+		ood.push_message(message2);
+
+		assert_eq!(Oodle::from_str(expected), Ok(ood))
 	}
 }
