@@ -1,6 +1,18 @@
+use std::{
+	future::Future,
+	net::SocketAddr,
+	pin::Pin,
+	sync::Arc,
+	task::{Context, Poll},
+};
+
+use hyper::{service::Service, Body, Request, Response, Server};
+use oodles::Oodle;
+
 mod config;
 
-fn main() {
+#[tokio::main]
+async fn main() {
 	let config = config::Config::get();
 
 	println!(
@@ -10,6 +22,62 @@ fn main() {
 		config.credential_file.to_string_lossy(),
 		config.data_directory.to_string_lossy()
 	);
+
+	let database = Arc::new(Database {});
+
+	let server = Server::bind(&SocketAddr::new(config.address, config.port)).serve(MakeSvc {
+		database: database.clone(),
+	});
+
+	server.await.unwrap();
+}
+
+#[derive(Clone, Debug)]
+struct Database {}
+
+struct MakeSvc {
+	database: Arc<Database>,
+}
+
+impl<T> Service<T> for MakeSvc {
+	type Response = Svc;
+	type Error = &'static str;
+	type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+	fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
+	}
+
+	fn call(&mut self, _: T) -> Self::Future {
+		let database = self.database.clone();
+		let fut = async move { Ok(Svc { database }) };
+		Box::pin(fut)
+	}
+}
+
+struct Svc {
+	database: Arc<Database>,
+}
+
+impl Service<Request<Body>> for Svc {
+	type Response = Response<Body>;
+	type Error = &'static str;
+	type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+	fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
+	}
+
+	fn call(&mut self, req: Request<Body>) -> Self::Future {
+		let db = self.database.clone();
+		Box::pin(async { Ok(Self::task(req, db).await) })
+	}
+}
+
+impl Svc {
+	async fn task(req: Request<Body>, db: Arc<Database>) -> Response<Body> {
+		todo!()
+	}
 }
 
 /*
@@ -62,5 +130,8 @@ generate a bempline document and fill in the times when the client requests.
 Perhaps we can have a little thing to set a cookie with the timezone so it's
 easier. A little warning near the top of the page if we don't have their
 timezone cookie set yet.
+
+Dangit we did the todo out of order. Got sidetracked by messages and oodles.
+Time for the servery bits and accounts.
 
 */
