@@ -8,3 +8,9 @@ edition = "2021"
 [dependencies]
 confindent = "2.1.0" # Configuration files
 getopts = "0.2.21"   # CLI parsing
+hyper = { version = "0.14", features = ["full"] }
+time = { version = "0.3.9", features = ["formatting", "macros"] }
+
+[dependencies.tokio]
+version = "1"
+features = ["rt", "macros", "fs"]

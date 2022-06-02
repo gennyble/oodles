@@ -1,0 +1,16 @@
+-= Title! =-
+
+2022-06-01 21:50:07-500
+Here is the first message! It spans
+multiple lines. And then just ends.
+.
+
+2022-06-01 21:51:30-500
+Lines don't have to wrap. Here's what it looks like if you want to put a period on its own line, for whatever reason, and have it not end the message.
+..
+Yup, just two periods. One of them is removed before displaying.
+.
+
+2022-06-01 22:13:41-500
+One is jus a thing, two is two things, but three is a pattern. Is that how that saying goes?
+.
