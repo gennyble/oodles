@@ -14,7 +14,7 @@ use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, Pa
 use hyper::{header, service::Service, Body, Method, Request, Response, Server};
 use oodles::Oodle;
 use rand::{rngs::OsRng, Rng};
-use small_http::{file_string_reply, query::Query};
+use small_http::{file_string_reply, query::Query, template::Template};
 use tokio::sync::RwLock;
 
 mod config;
@@ -120,6 +120,10 @@ impl Database {
 			None
 		}
 	}
+
+	pub async fn delete_session(&self, sid: String) -> bool {
+		self.users.write().await.delete_session(sid)
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -163,6 +167,20 @@ impl Users {
 		self.sessions.iter().find(|&s| s.cookie == sid)
 	}
 
+	pub fn delete_session(&mut self, sid: String) -> bool {
+		let op = self
+			.sessions
+			.iter()
+			.enumerate()
+			.find(|(_, sesh)| sesh.cookie == sid);
+		if let Some((idx, _)) = op {
+			self.sessions.swap_remove(idx);
+			true
+		} else {
+			false
+		}
+	}
+
 	fn random_base58(count: usize) -> String {
 		let mut ret = String::with_capacity(count);
 
@@ -192,6 +210,14 @@ impl Session {
 			.secure(true)
 			.httponly(true)
 			.max_age(Some(Duration::from_secs(60 * 60 * 24 * 7)))
+			.as_string()
+	}
+
+	pub fn get_clear_cookie(&self) -> String {
+		small_http::cookie::SetCookie::new("sid".into(), self.cookie.clone())
+			.secure(true)
+			.httponly(true)
+			.max_age(Some(Duration::from_secs(0)))
 			.as_string()
 	}
 }
@@ -244,10 +270,15 @@ impl Svc {
 			.trim_start_matches("/");
 
 		let session = db.get_session(&req).await;
+		let user_value = session
+			.as_ref()
+			.map(|s| format!("{} <a href='/logout'>(logout)</a>", s.username));
 
 		match (req.method(), path) {
 			(&Method::GET, "") | (&Method::GET, "index.html") => {
-				file_string_reply("web/index.html").await.unwrap()
+				let mut tpl = Template::file("web/index.html").await;
+				tpl.set("username", user_value.unwrap_or_default());
+				tpl.as_response().unwrap()
 			}
 			(&Method::GET, "login") => {
 				if session.is_some() {
@@ -263,6 +294,7 @@ impl Svc {
 			(&Method::GET, "style.css") => file_string_reply("web/style.css").await.unwrap(),
 
 			(&Method::POST, "login") => Self::user_login(req, db).await,
+			(&Method::GET, "logout") => Self::user_logout(req, db, session).await,
 			_ => Response::builder().body(Body::from("404")).unwrap(),
 		}
 	}
@@ -281,11 +313,38 @@ impl Svc {
 
 			builder
 				.header(header::SET_COOKIE, session.get_set_cookie())
-				.body(Body::from("Valid username/password"))
+				.header(header::LOCATION, "/")
+				.status(302)
+				.body(Body::from("Login success! Redirecting to home."))
 		} else {
 			builder.body(Body::from("INVALID username or password"))
 		}
 		.unwrap()
+	}
+
+	async fn user_logout(
+		_req: Request<Body>,
+		db: Arc<Database>,
+		session: Option<Session>,
+	) -> Response<Body> {
+		if session.is_none() {
+			return Response::builder()
+				.status(500)
+				.body(Body::from("No session cookie set! How did you get here?"))
+				.unwrap();
+		}
+
+		let session = session.unwrap();
+		let clear = session.get_clear_cookie();
+		db.delete_session(session.cookie).await;
+
+		Response::builder()
+			.status(302)
+			.header(header::SET_COOKIE, clear)
+			.header(header::LOCATION, "/")
+			.status(302)
+			.body(Body::from("Logged out, redirecting home."))
+			.unwrap()
 	}
 }
 
