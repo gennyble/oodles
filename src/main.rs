@@ -1,13 +1,16 @@
 use std::{
+	error::Error,
 	future::Future,
 	net::SocketAddr,
+	path::Path,
 	pin::Pin,
 	sync::Arc,
 	task::{Context, Poll},
 };
 
-use hyper::{service::Service, Body, Request, Response, Server};
+use hyper::{service::Service, Body, Method, Request, Response, Server};
 use oodles::Oodle;
+use small_http::file_string_reply;
 
 mod config;
 
@@ -75,8 +78,21 @@ impl Service<Request<Body>> for Svc {
 }
 
 impl Svc {
-	async fn task(req: Request<Body>, db: Arc<Database>) -> Response<Body> {
-		todo!()
+	async fn task(req: Request<Body>, _db: Arc<Database>) -> Response<Body> {
+		let path = req
+			.uri()
+			.path()
+			.trim_end_matches("/")
+			.trim_start_matches("/");
+
+		match (req.method(), path) {
+			(&Method::GET, "") | (&Method::GET, "index.html") => {
+				file_string_reply("web/index.html").await.unwrap()
+			}
+			(&Method::GET, "login") => file_string_reply("web/login.html").await.unwrap(),
+			(&Method::GET, "style.css") => file_string_reply("web/style.css").await.unwrap(),
+			_ => Response::builder().body(Body::from("404")).unwrap(),
+		}
 	}
 }
 

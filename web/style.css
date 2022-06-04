@@ -1,0 +1,50 @@
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+main {
+	padding-top: 1rem;
+	font-size: 1.2rem;
+}
+
+header {
+	padding-bottom: 1rem;
+	border-bottom: 2px solid black;
+}
+
+@media (max-width: 50rem) {
+	body {
+		padding: 1.5rem 0;
+	}
+
+	/* Modile target */
+	main,
+	nav,
+	header,
+	footer {
+		width: 100%;
+
+		padding: 0 1rem;
+		margin: 0 auto;
+	}
+}
+
+@media (min-width: 50rem) {
+	body {
+		padding: 3rem 0;
+	}
+
+	/* Desktop target */
+	main,
+	nav,
+	header,
+	footer {
+		display: block;
+
+		width: 46rem;
+
+		margin: 0 auto;
+	}
+}
