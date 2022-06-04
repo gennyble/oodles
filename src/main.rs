@@ -7,13 +7,15 @@ use std::{
 	pin::Pin,
 	sync::Arc,
 	task::{Context, Poll},
+	time::Duration,
 };
 
 use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use hyper::{service::Service, Body, Method, Request, Response, Server};
+use hyper::{header, service::Service, Body, Method, Request, Response, Server};
 use oodles::Oodle;
-use rand_core::OsRng;
+use rand::{rngs::OsRng, Rng};
 use small_http::{file_string_reply, query::Query};
+use tokio::sync::RwLock;
 
 mod config;
 
@@ -60,21 +62,30 @@ fn command_encrypt() -> ! {
 	}
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Database {
-	users: Users,
+	users: RwLock<Users>,
 }
 
 impl Database {
 	pub fn get<C: AsRef<Path>>(credentials: C) -> Self {
 		Database {
-			users: Users::load_file(credentials),
+			users: RwLock::new(Users::load_file(credentials)),
 		}
 	}
 
-	pub fn verify<U: AsRef<str>, P: AsRef<str>>(&self, username: U, password: P) -> bool {
-		if let Some(hash) = self.users.users.get(username.as_ref()) {
-			let parsed_hash = PasswordHash::new(hash).unwrap();
+	pub async fn verify_user_login<U: AsRef<str>, P: AsRef<str>>(
+		&self,
+		username: U,
+		password: P,
+	) -> bool {
+		let hash = {
+			let lock = self.users.read().await;
+			lock.users.get(username.as_ref()).map(String::to_owned)
+		};
+
+		if let Some(hash) = hash {
+			let parsed_hash = PasswordHash::new(&hash).unwrap();
 
 			Argon2::default()
 				.verify_password(password.as_ref().as_bytes(), &parsed_hash)
@@ -83,14 +94,44 @@ impl Database {
 			false
 		}
 	}
+
+	pub async fn new_user_session<U: AsRef<str>>(&self, username: U) -> Session {
+		self.users.write().await.new_session(username).clone()
+	}
+
+	//TODO: gen- this is gross
+	pub async fn get_session<T>(&self, req: &Request<T>) -> Option<Session> {
+		if let Some(cook) = req.headers().get(header::COOKIE) {
+			let cookie = small_http::cookie::parse_header(cook.to_str().unwrap())
+				.unwrap()
+				.get("sid")
+				.map(|s| (*s).to_owned());
+
+			if let Some(cookie) = cookie {
+				self.users
+					.read()
+					.await
+					.get_session(cookie)
+					.map(Session::to_owned)
+			} else {
+				None
+			}
+		} else {
+			None
+		}
+	}
 }
 
 #[derive(Clone, Debug)]
 struct Users {
 	users: HashMap<String, String>,
+	sessions: Vec<Session>,
 }
 
 impl Users {
+	const BASE58: &'static [u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+	const SESSION_ID_LENGTH: usize = 6;
+
 	pub fn load_file<C: AsRef<Path>>(credentials: C) -> Users {
 		let string = std::fs::read_to_string(credentials).unwrap();
 
@@ -104,7 +145,54 @@ impl Users {
 			}
 		}
 
-		Users { users }
+		Users {
+			users,
+			sessions: vec![],
+		}
+	}
+
+	pub fn new_session<U: AsRef<str>>(&mut self, username: U) -> &Session {
+		let cookie = Self::random_base58(Self::SESSION_ID_LENGTH);
+
+		let session = Session::new(cookie, username.as_ref().into());
+		self.sessions.push(session);
+		self.sessions.last().unwrap()
+	}
+
+	pub fn get_session(&self, sid: String) -> Option<&Session> {
+		self.sessions.iter().find(|&s| s.cookie == sid)
+	}
+
+	fn random_base58(count: usize) -> String {
+		let mut ret = String::with_capacity(count);
+
+		let mut rng = OsRng::default();
+		for _ in 0..count {
+			let ridx = rng.gen_range(0..Self::BASE58.len());
+			ret.push(Self::BASE58[ridx] as char)
+		}
+
+		ret
+	}
+}
+
+#[derive(Clone, Debug)]
+struct Session {
+	cookie: String,
+	username: String,
+}
+
+impl Session {
+	pub fn new(cookie: String, username: String) -> Self {
+		Self { cookie, username }
+	}
+
+	pub fn get_set_cookie(&self) -> String {
+		small_http::cookie::SetCookie::new("sid".into(), self.cookie.clone())
+			.secure(true)
+			.httponly(true)
+			.max_age(Some(Duration::from_secs(60 * 60 * 24 * 7)))
+			.as_string()
 	}
 }
 
@@ -155,11 +243,23 @@ impl Svc {
 			.trim_end_matches("/")
 			.trim_start_matches("/");
 
+		let session = db.get_session(&req).await;
+
 		match (req.method(), path) {
 			(&Method::GET, "") | (&Method::GET, "index.html") => {
 				file_string_reply("web/index.html").await.unwrap()
 			}
-			(&Method::GET, "login") => file_string_reply("web/login.html").await.unwrap(),
+			(&Method::GET, "login") => {
+				if session.is_some() {
+					Response::builder()
+						.header("Location", "/")
+						.status(302)
+						.body(Body::default())
+						.unwrap()
+				} else {
+					file_string_reply("web/login.html").await.unwrap()
+				}
+			}
 			(&Method::GET, "style.css") => file_string_reply("web/style.css").await.unwrap(),
 
 			(&Method::POST, "login") => Self::user_login(req, db).await,
@@ -176,8 +276,12 @@ impl Svc {
 
 		let builder = Response::builder().status(200);
 
-		if db.verify(username, password) {
-			builder.body(Body::from("Valid username/password"))
+		if db.verify_user_login(username, password).await {
+			let session = db.new_user_session(username).await;
+
+			builder
+				.header(header::SET_COOKIE, session.get_set_cookie())
+				.body(Body::from("Valid username/password"))
 		} else {
 			builder.body(Body::from("INVALID username or password"))
 		}
