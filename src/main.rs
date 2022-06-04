@@ -1,4 +1,5 @@
 use std::{
+	collections::HashMap,
 	error::Error,
 	future::Future,
 	net::SocketAddr,
@@ -8,11 +9,11 @@ use std::{
 	task::{Context, Poll},
 };
 
-use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use hyper::{service::Service, Body, Method, Request, Response, Server};
 use oodles::Oodle;
 use rand_core::OsRng;
-use small_http::file_string_reply;
+use small_http::{file_string_reply, query::Query};
 
 mod config;
 
@@ -34,7 +35,7 @@ async fn main() {
 		config.data_directory.to_string_lossy()
 	);
 
-	let database = Arc::new(Database {});
+	let database = Arc::new(Database::get(config.credential_file));
 
 	let server = Server::bind(&SocketAddr::new(config.address, config.port)).serve(MakeSvc {
 		database: database.clone(),
@@ -60,7 +61,52 @@ fn command_encrypt() -> ! {
 }
 
 #[derive(Clone, Debug)]
-struct Database {}
+struct Database {
+	users: Users,
+}
+
+impl Database {
+	pub fn get<C: AsRef<Path>>(credentials: C) -> Self {
+		Database {
+			users: Users::load_file(credentials),
+		}
+	}
+
+	pub fn verify<U: AsRef<str>, P: AsRef<str>>(&self, username: U, password: P) -> bool {
+		if let Some(hash) = self.users.users.get(username.as_ref()) {
+			let parsed_hash = PasswordHash::new(hash).unwrap();
+
+			Argon2::default()
+				.verify_password(password.as_ref().as_bytes(), &parsed_hash)
+				.is_ok()
+		} else {
+			false
+		}
+	}
+}
+
+#[derive(Clone, Debug)]
+struct Users {
+	users: HashMap<String, String>,
+}
+
+impl Users {
+	pub fn load_file<C: AsRef<Path>>(credentials: C) -> Users {
+		let string = std::fs::read_to_string(credentials).unwrap();
+
+		let mut users = HashMap::new();
+		for line in string.lines() {
+			match line.split_once(" ") {
+				Some((username, hash)) => {
+					users.insert(username.into(), hash.into());
+				}
+				_ => panic!("did not understand credential file format"),
+			}
+		}
+
+		Users { users }
+	}
+}
 
 struct MakeSvc {
 	database: Arc<Database>,
@@ -102,7 +148,7 @@ impl Service<Request<Body>> for Svc {
 }
 
 impl Svc {
-	async fn task(req: Request<Body>, _db: Arc<Database>) -> Response<Body> {
+	async fn task(req: Request<Body>, db: Arc<Database>) -> Response<Body> {
 		let path = req
 			.uri()
 			.path()
@@ -115,8 +161,27 @@ impl Svc {
 			}
 			(&Method::GET, "login") => file_string_reply("web/login.html").await.unwrap(),
 			(&Method::GET, "style.css") => file_string_reply("web/style.css").await.unwrap(),
+
+			(&Method::POST, "login") => Self::user_login(req, db).await,
 			_ => Response::builder().body(Body::from("404")).unwrap(),
 		}
+	}
+
+	async fn user_login(mut req: Request<Body>, db: Arc<Database>) -> Response<Body> {
+		let body = hyper::body::to_bytes(req.body_mut()).await.unwrap();
+		let query: Query = String::from_utf8_lossy(&body).parse().unwrap();
+
+		let username = query.get_first_value("username").unwrap();
+		let password = query.get_first_value("password").unwrap();
+
+		let builder = Response::builder().status(200);
+
+		if db.verify(username, password) {
+			builder.body(Body::from("Valid username/password"))
+		} else {
+			builder.body(Body::from("INVALID username or password"))
+		}
+		.unwrap()
 	}
 }
 
