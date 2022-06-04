@@ -8,14 +8,22 @@ use std::{
 	task::{Context, Poll},
 };
 
+use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
 use hyper::{service::Service, Body, Method, Request, Response, Server};
 use oodles::Oodle;
+use rand_core::OsRng;
 use small_http::file_string_reply;
 
 mod config;
 
 #[tokio::main]
 async fn main() {
+	let command = std::env::args().nth(1);
+
+	if let Some("encrypt") = command.as_deref() {
+		command_encrypt()
+	}
+
 	let config = config::Config::get();
 
 	println!(
@@ -33,6 +41,22 @@ async fn main() {
 	});
 
 	server.await.unwrap();
+}
+
+fn command_encrypt() -> ! {
+	loop {
+		let mut line = String::new();
+		std::io::stdin().read_line(&mut line).unwrap();
+
+		let salt = SaltString::generate(&mut OsRng);
+		let argon2 = Argon2::default();
+		let hash = argon2
+			.hash_password(line.trim().as_bytes(), &salt)
+			.unwrap()
+			.to_string();
+
+		println!("{}", hash);
+	}
 }
 
 #[derive(Clone, Debug)]
