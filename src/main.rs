@@ -12,9 +12,9 @@ use std::{
 
 use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use hyper::{header, service::Service, Body, Method, Request, Response, Server};
+use mavourings::{file_string_reply, query::Query, template::Template};
 use oodles::Oodle;
 use rand::{rngs::OsRng, Rng};
-use small_http::{file_string_reply, query::Query, template::Template};
 use tokio::sync::RwLock;
 
 mod config;
@@ -102,7 +102,7 @@ impl Database {
 	//TODO: gen- this is gross
 	pub async fn get_session<T>(&self, req: &Request<T>) -> Option<Session> {
 		if let Some(cook) = req.headers().get(header::COOKIE) {
-			let cookie = small_http::cookie::parse_header(cook.to_str().unwrap())
+			let cookie = mavourings::cookie::parse_header(cook.to_str().unwrap())
 				.unwrap()
 				.get("sid")
 				.map(|s| (*s).to_owned());
@@ -206,7 +206,7 @@ impl Session {
 	}
 
 	pub fn get_set_cookie(&self) -> String {
-		small_http::cookie::SetCookie::new("sid".into(), self.cookie.clone())
+		mavourings::cookie::SetCookie::new("sid".into(), self.cookie.clone())
 			.secure(true)
 			.httponly(true)
 			.max_age(Some(Duration::from_secs(60 * 60 * 24 * 7)))
@@ -214,7 +214,7 @@ impl Session {
 	}
 
 	pub fn get_clear_cookie(&self) -> String {
-		small_http::cookie::SetCookie::new("sid".into(), self.cookie.clone())
+		mavourings::cookie::SetCookie::new("sid".into(), self.cookie.clone())
 			.secure(true)
 			.httponly(true)
 			.max_age(Some(Duration::from_secs(0)))
@@ -270,15 +270,10 @@ impl Svc {
 			.trim_start_matches("/");
 
 		let session = db.get_session(&req).await;
-		let user_value = session
-			.as_ref()
-			.map(|s| format!("{} <a href='/logout'>(logout)</a>", s.username));
 
 		match (req.method(), path) {
 			(&Method::GET, "") | (&Method::GET, "index.html") => {
-				let mut tpl = Template::file("web/index.html").await;
-				tpl.set("username", user_value.unwrap_or_default());
-				tpl.as_response().unwrap()
+				Self::index(req, db, session.as_ref()).await
 			}
 			(&Method::GET, "login") => {
 				if session.is_some() {
@@ -297,6 +292,20 @@ impl Svc {
 			(&Method::GET, "logout") => Self::user_logout(req, db, session).await,
 			_ => Response::builder().body(Body::from("404")).unwrap(),
 		}
+	}
+
+	async fn index(
+		mut req: Request<Body>,
+		db: Arc<Database>,
+		session: Option<&Session>,
+	) -> Response<Body> {
+		let user_value = session
+			.map(|s| format!("{} <a href='/logout'>(logout)</a>", s.username))
+			.unwrap_or(String::from("<a href='/login'>login</a>"));
+
+		let mut tpl = Template::file("web/index.html").await;
+		tpl.set("username", user_value);
+		tpl.as_response().unwrap()
 	}
 
 	async fn user_login(mut req: Request<Body>, db: Arc<Database>) -> Response<Body> {
@@ -402,4 +411,8 @@ timezone cookie set yet.
 Dangit we did the todo out of order. Got sidetracked by messages and oodles.
 Time for the servery bits and accounts.
 
+2022-08-07 18:03 -800
+It seems I did accounts and things last time! Nice, thanks me. But I forgot
+the password for testuser and it's hashed, so. I made it `password` because that
+seems alright
 */
