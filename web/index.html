@@ -16,11 +16,20 @@
 	<main>
 		<p>
 			An Oodle is like a thread on twitter except:<br>
-			I can add edit messages! And remove them without breaking it. I
+			I can edit messages! And remove them without breaking it. I
 			think I want to equate an Oodle to a livestream, but in text. Later,
 			it can be transformed into a more complete, structured post, or just
 			left as it is.
 		</p>
+		<form id="new-ooodle" method="post" action="/oodles">
+			<label for="title">Title</label>
+			<input type="text" id="title" name="title" placeholder="Oodle Title">
+
+			<label for="filename">Filename</label>
+			<input type="text" id="filename" name="filename" placeholder="Oodle Filename">
+
+			<textarea form="new-oodle" rows="8" wrap="soft"></textarea>
+		</form>
 		<section>
 			{oodles}
 		</section>
