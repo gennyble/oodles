@@ -304,6 +304,13 @@ impl Svc {
 			.unwrap_or(String::from("<a href='/login'>login</a>"));
 
 		let mut tpl = Template::file("web/index.html").await;
+
+		//FIXME: gen- we want bempline to have and `else` for `if-set` so that
+		// the username can remain unset and I don't have to do this
+		if session.is_some() {
+			tpl.set("postpermission", "true")
+		}
+
 		tpl.set("username", user_value);
 		tpl.as_response().unwrap()
 	}
