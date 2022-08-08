@@ -3,7 +3,7 @@ use std::{
 	error::Error,
 	future::Future,
 	net::SocketAddr,
-	path::Path,
+	path::{Path, PathBuf},
 	pin::Pin,
 	sync::Arc,
 	task::{Context, Poll},
@@ -13,8 +13,9 @@ use std::{
 use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use hyper::{header, service::Service, Body, Method, Request, Response, Server};
 use mavourings::{file_string_reply, query::Query, template::Template};
-use oodles::Oodle;
+use oodles::{Message, Oodle};
 use rand::{rngs::OsRng, Rng};
+use time::{macros::offset, OffsetDateTime};
 use tokio::sync::RwLock;
 
 mod config;
@@ -37,7 +38,8 @@ async fn main() {
 		config.data_directory.to_string_lossy()
 	);
 
-	let database = Arc::new(Database::get(config.credential_file));
+	let database = Arc::new(Database::get(config.credential_file, config.data_directory));
+	database.create_directories();
 
 	let server = Server::bind(&SocketAddr::new(config.address, config.port)).serve(MakeSvc {
 		database: database.clone(),
@@ -64,13 +66,25 @@ fn command_encrypt() -> ! {
 
 #[derive(Debug)]
 struct Database {
+	data_directory: PathBuf,
+
 	users: RwLock<Users>,
+	oodles: RwLock<Vec<Oodle>>,
 }
 
 impl Database {
-	pub fn get<C: AsRef<Path>>(credentials: C) -> Self {
+	pub fn get<C: AsRef<Path>, D: Into<PathBuf>>(credentials: C, data_directory: D) -> Self {
 		Database {
+			data_directory: data_directory.into(),
+
 			users: RwLock::new(Users::load_file(credentials)),
+			oodles: RwLock::new(vec![]),
+		}
+	}
+
+	pub fn create_directories(&self) {
+		if !self.oodle_path().exists() {
+			std::fs::create_dir(self.oodle_path()).unwrap()
 		}
 	}
 
@@ -123,6 +137,36 @@ impl Database {
 
 	pub async fn delete_session(&self, sid: String) -> bool {
 		self.users.write().await.delete_session(sid)
+	}
+
+	pub fn oodle_path(&self) -> PathBuf {
+		let mut path = self.data_directory.clone();
+		path.push("oodles");
+		path
+	}
+
+	pub async fn new_oodle<T: Into<String>, F: Into<String>>(
+		&self,
+		title: T,
+		filename: F,
+		message: Message,
+	) {
+		let mut oodle_path = self.oodle_path();
+		oodle_path.push(filename.into());
+
+		let oodle = Oodle::new(title, oodle_path, message);
+		oodle.save().await.unwrap();
+
+		self.oodles.write().await.push(oodle);
+	}
+
+	pub async fn oodle_metedata(&self) -> Vec<(String, Option<OffsetDateTime>)> {
+		self.oodles
+			.read()
+			.await
+			.iter()
+			.map(|oodle| (oodle.name.to_owned(), oodle.date()))
+			.collect()
 	}
 }
 
@@ -273,8 +317,10 @@ impl Svc {
 
 		match (req.method(), path) {
 			(&Method::GET, "") | (&Method::GET, "index.html") => {
-				Self::index(req, db, session.as_ref()).await
+				Self::index(req, db, session).await
 			}
+			(&Method::GET, "style.css") => file_string_reply("web/style.css").await.unwrap(),
+
 			(&Method::GET, "login") => {
 				if session.is_some() {
 					Response::builder()
@@ -286,10 +332,12 @@ impl Svc {
 					file_string_reply("web/login.html").await.unwrap()
 				}
 			}
-			(&Method::GET, "style.css") => file_string_reply("web/style.css").await.unwrap(),
 
 			(&Method::POST, "login") => Self::user_login(req, db).await,
 			(&Method::GET, "logout") => Self::user_logout(req, db, session).await,
+
+			(&Method::POST, "oodles/create") => Self::oodle_create(req, db, session).await,
+
 			_ => Response::builder().body(Body::from("404")).unwrap(),
 		}
 	}
@@ -297,13 +345,16 @@ impl Svc {
 	async fn index(
 		mut req: Request<Body>,
 		db: Arc<Database>,
-		session: Option<&Session>,
+		session: Option<Session>,
 	) -> Response<Body> {
 		let user_value = session
+			.as_ref()
 			.map(|s| format!("{} <a href='/logout'>(logout)</a>", s.username))
 			.unwrap_or(String::from("<a href='/login'>login</a>"));
 
 		let mut tpl = Template::file("web/index.html").await;
+
+		tpl.set("username", user_value);
 
 		//FIXME: gen- we want bempline to have and `else` for `if-set` so that
 		// the username can remain unset and I don't have to do this
@@ -311,8 +362,41 @@ impl Svc {
 			tpl.set("postpermission", "true")
 		}
 
-		tpl.set("username", user_value);
+		let mut oodle_dom = String::new();
+		for (title, datetime) in db.oodle_metedata().await {
+			//TODO: gen- display dates, too
+			oodle_dom.push_str(&format!("<h2>{}</h2>", title));
+		}
+		tpl.set("oodles", oodle_dom);
+
 		tpl.as_response().unwrap()
+	}
+
+	async fn oodle_create(
+		mut req: Request<Body>,
+		db: Arc<Database>,
+		session: Option<Session>,
+	) -> Response<Body> {
+		//FIXME: gen- check user has rights to make an oodle
+		let body = hyper::body::to_bytes(req.body_mut()).await.unwrap();
+		let body_string = String::from_utf8_lossy(&body);
+		println!("{}", body_string);
+		let query: Query = body_string.parse().unwrap();
+
+		let title = query.get_first_value("title").unwrap();
+		let filename = query.get_first_value("filename").unwrap();
+		let content = query.get_first_value("firstPost").unwrap();
+
+		//TODO: gen- Assocaite offset with user account.
+		let message = Message::new_now(content, offset!(-5));
+		db.new_oodle(title, filename, message).await;
+
+		Response::builder()
+			.status(200)
+			.header(header::LOCATION, "/")
+			.status(302)
+			.body(Body::from("Login success! Redirecting to home."))
+			.unwrap()
 	}
 
 	async fn user_login(mut req: Request<Body>, db: Arc<Database>) -> Response<Body> {

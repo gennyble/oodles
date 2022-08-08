@@ -27,7 +27,8 @@ form {
 	font-size: inherit;
 }
 
-textarea {
+textarea,
+input[type=submit] {
 	grid-column: 1 / 3;
 }
 

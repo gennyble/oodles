@@ -5,9 +5,9 @@ use tokio::{fs::File, io::AsyncWriteExt};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Oodle {
-	name: String,
-	file: PathBuf,
-	messages: Vec<Message>,
+	pub name: String,
+	pub file: PathBuf,
+	pub messages: Vec<Message>,
 }
 
 impl Oodle {
@@ -30,6 +30,10 @@ impl Oodle {
 	pub async fn save(&self) -> Result<(), std::io::Error> {
 		let mut file = File::create(&self.file).await?;
 		file.write(format!("{}", self).as_bytes()).await.map(|_| ())
+	}
+
+	pub fn date(&self) -> Option<OffsetDateTime> {
+		self.messages.first().map(|m| m.date)
 	}
 
 	fn extract_title(s: &str) -> Option<String> {
@@ -110,10 +114,10 @@ pub struct Message {
 impl Message {
 	const TIME_FORMAT: &'static[FormatItem<'static>] = format_description!("[year padding:zero repr:full base:calendar sign:automatic]-[month padding:zero repr:numerical]-[day padding:zero] [hour padding:zero repr:24]:[minute padding:zero]:[second padding:zero][offset_hour padding:zero sign:mandatory][offset_minute padding:zero]");
 
-	pub fn new_now(message: String, offset: UtcOffset) -> Self {
+	pub fn new_now<M: Into<String>>(message: M, offset: UtcOffset) -> Self {
 		Self {
 			date: OffsetDateTime::now_utc().to_offset(offset),
-			content: message,
+			content: message.into(),
 		}
 	}
 
