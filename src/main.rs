@@ -414,5 +414,20 @@ Time for the servery bits and accounts.
 2022-08-07 18:03 -800
 It seems I did accounts and things last time! Nice, thanks me. But I forgot
 the password for testuser and it's hashed, so. I made it `password` because that
-seems alright
+seems alright.
+.
+
+Okay, it's tomorrow. We want to be able to hide messages. We should worry about
+that later and just get the prototype working. But if we don't write it down now
+it'll be trapped in this stupid head.
+
+So we have the OffsetDateTime on a line by itself and this leads in the Message.
+What I want to do is to be able to add metadata on a message. Mostly I just want
+to indicate if it's hidden or not, but I would also *love* to be able to save
+and edit time, too. I think the edit time can come later and be on the next
+line. Something like `edited <offsetdatetime>` and then we just look for that.
+It keeps with the "readable and writeable to humans" theme going, see. So I want
+to keep that with the meta, too. I just want to be able to mark messages as
+hidden, see? I think I could do that by leading the OffsetDateTime with an
+asterisk, but we can worry later.
 */
