@@ -1,4 +1,8 @@
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::{
+	fmt,
+	path::{Path, PathBuf},
+	str::FromStr,
+};
 
 use time::{format_description::FormatItem, macros::format_description, OffsetDateTime, UtcOffset};
 use tokio::{fs::File, io::AsyncWriteExt};
@@ -30,6 +34,12 @@ impl Oodle {
 	pub async fn save(&self) -> Result<(), std::io::Error> {
 		let mut file = File::create(&self.file).await?;
 		file.write(format!("{}", self).as_bytes()).await.map(|_| ())
+	}
+
+	pub async fn read<P: AsRef<Path>>(path: P) -> Result<Oodle, std::io::Error> {
+		let mut oodle: Oodle = std::fs::read_to_string(path.as_ref())?.parse().unwrap();
+		oodle.file = path.as_ref().to_owned();
+		Ok(oodle)
 	}
 
 	pub fn date(&self) -> Option<OffsetDateTime> {

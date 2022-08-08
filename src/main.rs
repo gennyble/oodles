@@ -40,6 +40,7 @@ async fn main() {
 
 	let database = Arc::new(Database::get(config.credential_file, config.data_directory));
 	database.create_directories();
+	database.load_oodles().await;
 
 	let server = Server::bind(&SocketAddr::new(config.address, config.port)).serve(MakeSvc {
 		database: database.clone(),
@@ -85,6 +86,14 @@ impl Database {
 	pub fn create_directories(&self) {
 		if !self.oodle_path().exists() {
 			std::fs::create_dir(self.oodle_path()).unwrap()
+		}
+	}
+
+	pub async fn load_oodles(&self) {
+		let mut oodles = self.oodles.write().await;
+		for entry in std::fs::read_dir(self.oodle_path()).unwrap() {
+			let oodle = Oodle::read(entry.unwrap().path()).await.unwrap();
+			oodles.push(oodle);
 		}
 	}
 
