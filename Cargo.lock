@@ -28,8 +28,6 @@ checksum = "dea908e7347a8c64e378c17e30ef880ad73e3b4498346b055c2c00ea342f3179"
 [[package]]
 name = "bempline"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77348f4e69b342fb3ccba3088a79393d91257baf2f0eeb17f4d79958e9f63f82"
 
 [[package]]
 name = "blake2"
@@ -295,7 +293,6 @@ dependencies = [
 [[package]]
 name = "mavourings"
 version = "0.1.0"
-source = "git+https://github.com/gennyble/mavourings#cf376e83b7f76c1de8d10a0ebe5ecb5c82a3d65d"
 dependencies = [
  "bempline",
  "hyper",

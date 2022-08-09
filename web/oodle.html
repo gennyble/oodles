@@ -1,0 +1,25 @@
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/style.css" />
+    <title>{name}</title>
+</head>
+
+<body>
+    <header>
+        <h1>{name}</h1>
+    </header>
+    <main>
+        {%pattern message}
+        <section>
+            <h3>{date}</h3>
+            <p>
+                {message}
+            </p>
+        </section>
+        {%end}
+    </main>
+</body>
+
+</html>

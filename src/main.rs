@@ -177,6 +177,18 @@ impl Database {
 			.map(|oodle| (oodle.name.to_owned(), oodle.date()))
 			.collect()
 	}
+
+	pub async fn get_oodle_by_name<S: AsRef<str>>(&self, name: S) -> Option<Oodle> {
+		self.oodles
+			.read()
+			.await
+			.iter()
+			.find(|&o| {
+				println!("'{}' == '{}'", o.name, name.as_ref());
+				o.name.to_lowercase() == name.as_ref().to_lowercase()
+			})
+			.map(<_>::to_owned)
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -320,11 +332,18 @@ impl Svc {
 			.uri()
 			.path()
 			.trim_end_matches("/")
-			.trim_start_matches("/");
+			.trim_start_matches("/")
+			.to_owned();
 
 		let session = db.get_session(&req).await;
 
-		match (req.method(), path) {
+		if req.method() == Method::GET {
+			if let Some(name) = path.strip_prefix("oodles/") {
+				return Self::oodle_view(req, db, name.to_owned()).await;
+			}
+		}
+
+		match (req.method(), path.as_str()) {
 			(&Method::GET, "") | (&Method::GET, "index.html") => {
 				Self::index(req, db, session).await
 			}
@@ -371,12 +390,13 @@ impl Svc {
 			tpl.set("postpermission", "true")
 		}
 
-		let mut oodle_dom = String::new();
 		for (title, datetime) in db.oodle_metedata().await {
 			//TODO: gen- display dates, too
-			oodle_dom.push_str(&format!("<h2>{}</h2>", title));
+			let mut pattern = tpl.document.get_pattern("oodle").unwrap();
+			pattern.set("name", title);
+
+			tpl.document.set_pattern("oodle", pattern);
 		}
-		tpl.set("oodles", oodle_dom);
 
 		tpl.as_response().unwrap()
 	}
@@ -406,6 +426,26 @@ impl Svc {
 			.status(302)
 			.body(Body::from("Login success! Redirecting to home."))
 			.unwrap()
+	}
+
+	async fn oodle_view(mut req: Request<Body>, db: Arc<Database>, name: String) -> Response<Body> {
+		println!("Reqested oodle: {}", name);
+		let oodle = db.get_oodle_by_name(name).await.unwrap();
+
+		let mut tpl = Template::file("web/oodle.html").await;
+		tpl.set("name", oodle.name);
+
+		for msg in oodle.messages {
+			let mut pattern = tpl.document.get_pattern("message").unwrap();
+
+			//TODO: gen- actually format the date
+			pattern.set("date", "TODO");
+			pattern.set("message", msg.content);
+
+			tpl.document.set_pattern("message", pattern);
+		}
+
+		tpl.as_response().unwrap()
 	}
 
 	async fn user_login(mut req: Request<Body>, db: Arc<Database>) -> Response<Body> {

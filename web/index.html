@@ -34,7 +34,12 @@
 		</form>
 		{%end}
 		<section>
-			{oodles}
+			{%pattern oodle}
+			<section>
+				<h2><a href="/oodles/{name}">{name}</a></h2>
+				<h3>{date}</h3>
+			</section>
+			{%end}
 		</section>
 	</main>
 </body>
