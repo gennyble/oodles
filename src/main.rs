@@ -352,7 +352,7 @@ impl Svc {
 		if req.method() == Method::GET {
 			if let Some(name) = path.strip_prefix("oodles/") {
 				let name = query::Query::url_decode(name, false).unwrap();
-				return Self::oodle_view(req, db, name).await;
+				return Self::oodle_view(req, db, name, session).await;
 			}
 		}
 
@@ -377,7 +377,8 @@ impl Svc {
 			(&Method::POST, "login") => Self::user_login(req, db).await,
 			(&Method::GET, "logout") => Self::user_logout(req, db, session).await,
 
-			(&Method::POST, "oodles/create") => Self::oodle_create(req, db, session).await,
+			(&Method::POST, "oodle/create") => Self::oodle_create(req, db, session).await,
+			(&Method::POST, "oodle/message") => Self::oodle_message(req, db, session).await,
 
 			_ => Response::builder().body(Body::from("404")).unwrap(),
 		}
@@ -447,24 +448,66 @@ impl Svc {
 			.unwrap()
 	}
 
-	async fn oodle_view(mut req: Request<Body>, db: Arc<Database>, name: String) -> Response<Body> {
+	async fn oodle_view(
+		mut req: Request<Body>,
+		db: Arc<Database>,
+		name: String,
+		session: Option<Session>,
+	) -> Response<Body> {
 		println!("Reqested oodle: {}", name);
 		let oodle = db.get_oodle_by_name(name).await.unwrap();
 
 		let mut tpl = Template::file("web/oodle.html").await;
 		tpl.set("name", oodle.name);
 
+		if let Some(_session) = session {
+			tpl.set("postpermission", "set");
+			tpl.set("filename", oodle.file.to_string_lossy());
+		}
+
 		for msg in oodle.messages {
 			let mut pattern = tpl.document.get_pattern("message").unwrap();
 
 			//TODO: gen- actually format the date
-			pattern.set("date", "TODO");
+			pattern.set("date", msg.date.format(DATETIME_FORMAT).unwrap());
 			pattern.set("message", msg.content);
 
 			tpl.document.set_pattern("message", pattern);
 		}
 
 		tpl.as_response().unwrap()
+	}
+
+	async fn oodle_message(
+		mut req: Request<Body>,
+		db: Arc<Database>,
+		session: Option<Session>,
+	) -> Response<Body> {
+		//TODO: gen- check the user actually has permission to add a message!
+		let body = hyper::body::to_bytes(req.body_mut()).await.unwrap();
+		let query: Query = String::from_utf8_lossy(&body).parse().unwrap();
+
+		let message = query.get_first_value("content").unwrap();
+		let filename = query.get_first_value("filename").unwrap();
+
+		let name = {
+			let mut writelock = db.oodles.write().await;
+			let oodle = writelock
+				.iter_mut()
+				.find(|o| o.file.to_string_lossy() == filename)
+				.unwrap();
+
+			oodle.push_message(Message::new_now(message, offset!(-5)));
+			oodle.save().await.unwrap();
+			oodle.name.clone()
+		};
+
+		Response::builder()
+			.status(200)
+			.header(header::LOCATION, format!("/oodles/{}", name))
+			.status(302)
+			.body(Body::from("Oodle updated! Redirecting back to page"))
+			.unwrap()
 	}
 
 	async fn user_login(mut req: Request<Body>, db: Arc<Database>) -> Response<Body> {
