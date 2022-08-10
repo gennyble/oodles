@@ -470,7 +470,7 @@ impl Svc {
 
 			//TODO: gen- actually format the date
 			pattern.set("date", msg.date.format(DATETIME_FORMAT).unwrap());
-			pattern.set("message", msg.content);
+			pattern.set("message", msg.content.replace("\n", "<br>"));
 
 			tpl.document.set_pattern("message", pattern);
 		}
