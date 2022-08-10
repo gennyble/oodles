@@ -15,10 +15,18 @@ use hyper::{header, service::Service, Body, Method, Request, Response, Server};
 use mavourings::{file_string_reply, query::Query, template::Template};
 use oodles::{Message, Oodle};
 use rand::{rngs::OsRng, Rng};
-use time::{macros::offset, OffsetDateTime};
+use time::{
+	format_description::FormatItem,
+	macros::{format_description, offset},
+	OffsetDateTime,
+};
 use tokio::sync::RwLock;
 
 mod config;
+
+const DATETIME_FORMAT: &[FormatItem] = format_description!(
+	"[weekday repr:long], [day padding:none] [year repr:full] [hour repr:24]:[minute padding:zero]"
+);
 
 #[tokio::main]
 async fn main() {
@@ -394,6 +402,12 @@ impl Svc {
 			//TODO: gen- display dates, too
 			let mut pattern = tpl.document.get_pattern("oodle").unwrap();
 			pattern.set("name", title);
+			pattern.set(
+				"date",
+				datetime
+					.map(|odt| odt.format(DATETIME_FORMAT).unwrap())
+					.unwrap(),
+			);
 
 			tpl.document.set_pattern("oodle", pattern);
 		}
