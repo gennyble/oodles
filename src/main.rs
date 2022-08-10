@@ -12,7 +12,11 @@ use std::{
 
 use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use hyper::{header, service::Service, Body, Method, Request, Response, Server};
-use mavourings::{file_string_reply, query::Query, template::Template};
+use mavourings::{
+	file_string_reply,
+	query::{self, Query},
+	template::Template,
+};
 use oodles::{Message, Oodle};
 use rand::{rngs::OsRng, Rng};
 use time::{
@@ -347,7 +351,8 @@ impl Svc {
 
 		if req.method() == Method::GET {
 			if let Some(name) = path.strip_prefix("oodles/") {
-				return Self::oodle_view(req, db, name.to_owned()).await;
+				let name = query::Query::url_decode(name, false).unwrap();
+				return Self::oodle_view(req, db, name).await;
 			}
 		}
 
