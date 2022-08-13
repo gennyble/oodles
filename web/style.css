@@ -7,6 +7,7 @@
 main {
 	padding-top: 1rem;
 	font-size: 1.2rem;
+	font-family: Arial, Helvetica, sans-serif;
 }
 
 header {
@@ -16,7 +17,7 @@ header {
 
 form {
 	position: relative;
-	width: 75%;
+	width: 100%;
 	margin: 1rem auto;
 
 	display: grid;
@@ -34,6 +35,8 @@ input[type=submit] {
 
 input {
 	font-size: inherit;
+	flex-shrink: 1;
+	width: 100%;
 }
 
 .oodle {
@@ -44,7 +47,7 @@ input {
 
 .oodle a {
 	text-decoration: none;
-	color: #099;
+	color: #3a8;
 }
 
 .oodle h2 {
@@ -58,9 +61,24 @@ h3 {
 	height: min-content;
 }
 
+textarea {
+	font-family: inherit;
+}
+
+.oodles {
+	display: grid;
+	margin: 1rem 0;
+	grid-template-columns: 1fr 1fr;
+}
+
+.oodle {
+	padding: 1rem;
+}
+
 @media (max-width: 50rem) {
+
 	body {
-		padding: 1.5rem 0;
+		padding: 1.5rem 1rem;
 	}
 
 	/* Modile target */
@@ -70,8 +88,15 @@ h3 {
 	footer {
 		width: 100%;
 
-		padding: 0 1rem;
 		margin: 0 auto;
+	}
+
+	header {
+		width: calc(100vw - 2rem);
+	}
+
+	.oodles {
+		grid-template-columns: 1fr;
 	}
 }
 
@@ -93,12 +118,10 @@ h3 {
 	}
 
 	.oodles {
-		display: grid;
-		margin: 1rem 0;
 		grid-template-columns: 1fr 1fr;
 	}
 
-	.oodle {
-		padding: 1rem;
+	form {
+		width: 75%;
 	}
 }

@@ -1,40 +1,47 @@
 <html>
 
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="/style.css" />
-    <style>
-        main>section {
-            width: 75%;
-            margin: 1rem auto;
-        }
-    </style>
-    <title>{name}</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="stylesheet" href="/style.css" />
+	<style>
+		main>section {
+			width: 75%;
+			margin: 1rem auto;
+		}
+
+		@media (max-width: 50rem) {
+			main>section {
+				width: 100%;
+				margin: 1rem auto;
+			}
+		}
+	</style>
+	<title>{name}</title>
 </head>
 
 <body>
-    <header>
-        <a href="/" style="text-decoration: none; color: black; border-bottom: 1px dashed black;">&lt;- back to list</a>
-        <h1>{name}</h1>
-    </header>
-    <main>
-        {%pattern message}
-        <section>
-            <h3>{date}</h3>
-            <p>
-                {message}
-            </p>
-        </section>
-        {%end}
-        {%if-set postpermission}
-        <form id="new-message" method="post" action="/oodle/message">
-            <input type="hidden" id="filename" name="filename" value="{filename}">
+	<header>
+		<a href="/" style="text-decoration: none; color: black; border-bottom: 1px dashed black;">&lt;- back to list</a>
+		<h1>{name}</h1>
+	</header>
+	<main>
+		{%pattern message}
+		<section>
+			<h3>{date}</h3>
+			<p>
+				{message}
+			</p>
+		</section>
+		{%end}
+		{%if-set postpermission}
+		<form id="new-message" method="post" action="/oodle/message">
+			<input type="hidden" id="filename" name="filename" value="{filename}">
 
-            <textarea form="new-message" id="content" name="content" rows="8" wrap="soft"></textarea>
-            <input type="submit" value="post">
-        </form>
-        {%end}
-    </main>
+			<textarea form="new-message" id="content" name="content" rows="8" wrap="soft"></textarea>
+			<input type="submit" value="post">
+		</form>
+		{%end}
+	</main>
 </body>
 
 </html>
