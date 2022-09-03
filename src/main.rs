@@ -373,7 +373,10 @@ impl Svc {
 						.body(Body::default())
 						.unwrap()
 				} else {
-					file_string_reply("web/login.html").await.unwrap()
+					Template::file("web/login.html")
+						.await
+						.as_response()
+						.unwrap()
 				}
 			}
 
