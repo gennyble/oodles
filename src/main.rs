@@ -378,7 +378,7 @@ impl Svc {
 			(&Method::GET, "logout") => Self::user_logout(req, db, session).await,
 
 			(&Method::POST, "oodle/create") => Self::oodle_create(req, db, session).await,
-			(&Method::POST, "oodle/message") => Self::oodle_message(req, db, session).await,
+			(&Method::POST, "oodle/message/create") => Self::oodle_message(req, db, session).await,
 
 			_ => Response::builder().body(Body::from("404")).unwrap(),
 		}

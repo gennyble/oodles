@@ -15,6 +15,13 @@
 				margin: 1rem auto;
 			}
 		}
+
+		main button {
+			border: none;
+			background-color: inherit;
+			padding: none;
+			margin: none;
+		}
 	</style>
 	<title>{name}</title>
 </head>
@@ -27,14 +34,14 @@
 	<main>
 		{%pattern message}
 		<section>
-			<h3>{date}</h3>
+			<h3>{date} {%if-set postpermission}<button>[edit]</button>{%end}</h3>
 			<p>
 				{message}
 			</p>
 		</section>
 		{%end}
 		{%if-set postpermission}
-		<form id="new-message" method="post" action="/oodle/message">
+		<form id="new-message" method="post" action="/oodle/message/create">
 			<input type="hidden" id="filename" name="filename" value="{filename}">
 
 			<textarea form="new-message" id="content" name="content" rows="8" wrap="soft"></textarea>
