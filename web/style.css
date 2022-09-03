@@ -62,6 +62,7 @@ h3 {
 }
 
 textarea {
+	resize: vertical;
 	font-family: inherit;
 }
 
