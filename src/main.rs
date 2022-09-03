@@ -13,7 +13,7 @@ use std::{
 use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use hyper::{header, service::Service, Body, Method, Request, Response, Server};
 use mavourings::{
-	file_string_reply,
+	file_reply, file_string_reply,
 	query::{self, Query},
 	template::Template,
 };
@@ -361,6 +361,9 @@ impl Svc {
 				Self::index(req, db, session).await
 			}
 			(&Method::GET, "style.css") => file_string_reply("web/style.css").await.unwrap(),
+
+			(&Method::GET, "logo.png") => file_reply("web/logo.png").await.unwrap(),
+			(&Method::GET, "logo.svg") => file_string_reply("web/logo.svg").await.unwrap(),
 
 			(&Method::GET, "login") => {
 				if session.is_some() {
