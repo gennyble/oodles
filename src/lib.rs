@@ -27,7 +27,20 @@ impl Oodle {
 		}
 	}
 
-	pub fn push_message(&mut self, msg: Message) {
+	pub fn push_message(&mut self, mut msg: Message) {
+		let idx = self.messages.last().map(|m| m.index + 1).unwrap_or(0);
+
+		if msg.index > 0 {
+			// Message declared it's own index
+			if msg.index < idx {
+				// but our index is bigger?? ignore the message index.
+				msg.index = idx;
+			}
+		} else {
+			// they were the first index or were not declared. either way we can set to 0
+			msg.index = idx;
+		}
+
 		self.messages.push(msg);
 	}
 
@@ -61,8 +74,19 @@ impl fmt::Display for Oodle {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "-= {} =-\n", self.name)?;
 
+		let mut idx = 0;
 		for msg in &self.messages {
-			write!(f, "\n{}.\n", msg)?;
+			// Weird indexes are fixed on write, so we don't have to check low/high here.
+			write!(f, "\n")?;
+			if idx != msg.index {
+				idx = msg.index;
+				msg.fmt_with_idx(f)?;
+			} else {
+				write!(f, "{}", msg)?;
+			}
+			write!(f, ".\n")?;
+
+			idx += 1;
 		}
 
 		Ok(())
@@ -91,32 +115,34 @@ impl FromStr for Oodle {
 			}
 		};
 
-		let mut messages: Vec<Message> = vec![];
+		let mut oodles = Self {
+			name: title,
+			file: PathBuf::from("/tmp"),
+			messages: vec![],
+		};
 
 		loop {
 			match s.find("\n.\n") {
-				Some(idx) => {
-					messages.push(s[..idx].trim().parse()?);
-					s = &s[idx + 3..];
+				Some(string_idx) => {
+					let message: Message = s[..string_idx].trim().parse()?;
+					oodles.push_message(message);
+					s = &s[string_idx + 3..];
 				}
 				None => break,
 			}
 		}
 
 		if !s.trim().is_empty() {
-			messages.push(s.trim().parse()?);
+			oodles.push_message(s.trim().parse()?);
 		}
 
-		Ok(Self {
-			name: title,
-			file: PathBuf::from("/tmp"),
-			messages,
-		})
+		Ok(oodles)
 	}
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
+	pub index: usize,
 	pub date: OffsetDateTime,
 	pub content: String,
 }
@@ -126,6 +152,7 @@ impl Message {
 
 	pub fn new_now<M: Into<String>>(message: M, offset: UtcOffset) -> Self {
 		Self {
+			index: 0,
 			date: OffsetDateTime::now_utc().to_offset(offset),
 			content: message.into(),
 		}
@@ -136,12 +163,23 @@ impl Message {
 			.format(Self::TIME_FORMAT)
 			.expect("Failed to format date. Why?")
 	}
-}
 
-impl fmt::Display for Message {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{}\n", self.formatted_date())?;
+	pub fn fmt_with_idx(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		self.fmt_write_dateline(f, true)?;
+		self.fmt_write_body(f)
+	}
 
+	fn fmt_write_dateline(&self, f: &mut fmt::Formatter<'_>, print_index: bool) -> fmt::Result {
+		write!(f, "{}", self.formatted_date())?;
+
+		if print_index {
+			write!(f, " ({})", self.index)?;
+		}
+
+		write!(f, "\n")
+	}
+
+	fn fmt_write_body(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		for line in self.content.lines() {
 			if line == "." {
 				write!(f, "..\n")?;
@@ -152,6 +190,34 @@ impl fmt::Display for Message {
 
 		Ok(())
 	}
+
+	fn parse_dateline(line: &str) -> Result<(Option<usize>, OffsetDateTime), ()> {
+		let (idx, dateline) = if line.ends_with(')') {
+			match line.rsplit_once(" ") {
+				Some((date, idx)) => {
+					let idx = &idx[1..idx.len() - 1];
+					let idx = usize::from_str_radix(idx, 10).unwrap();
+					(Some(idx), date)
+				}
+				None => panic!("malformed dateline"),
+			}
+		} else {
+			(None, line)
+		};
+
+		//TODO: gen- return an error rather than panic
+		match OffsetDateTime::parse(dateline, Self::TIME_FORMAT) {
+			Ok(dt) => return Ok((idx, dt)),
+			Err(e) => panic!("{}", e),
+		}
+	}
+}
+
+impl fmt::Display for Message {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		self.fmt_write_dateline(f, false)?;
+		self.fmt_write_body(f)
+	}
 }
 
 impl FromStr for Message {
@@ -161,12 +227,8 @@ impl FromStr for Message {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		let mut lines = s.lines();
 
-		let date = if let Some(datetime) = lines.next() {
-			//TODO: gen- return an error rather than panic
-			match OffsetDateTime::parse(datetime, Self::TIME_FORMAT) {
-				Ok(dt) => dt,
-				Err(e) => panic!("{}", e),
-			}
+		let (idx, date) = if let Some(dateline) = lines.next() {
+			Self::parse_dateline(dateline)?
 		} else {
 			// No datetime present! *(/nothing/ present)
 			return Err(());
@@ -183,6 +245,7 @@ impl FromStr for Message {
 		}
 
 		Ok(Self {
+			index: idx.unwrap_or(0),
 			date,
 			content: content.trim().to_owned(),
 		})
@@ -200,6 +263,7 @@ mod test {
 	#[test]
 	fn message_formats_correctly() {
 		let message = Message {
+			index: 0,
 			date: datetime!(2022-06-01 13:45 -5),
 			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
 		};
@@ -213,6 +277,7 @@ mod test {
 	#[test]
 	fn message_parses_correctly() {
 		let message = Message {
+			index: 0,
 			date: datetime!(2022-06-01 13:45 -5),
 			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
 		};
@@ -225,11 +290,13 @@ mod test {
 	#[test]
 	fn oodle_formats_correctly() {
 		let message = Message {
+			index: 0,
 			date: datetime!(2022-06-01 13:45 -5),
 			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
 		};
 
 		let message2 = Message {
+			index: 1,
 			date: datetime!(2022-06-01 14:15 -5),
 			content: String::from("Looky here another message!"),
 		};
@@ -244,13 +311,38 @@ mod test {
 	}
 
 	#[test]
-	fn oodle_parses_correctly() {
+	fn oodle_format_index_jump_correctly() {
 		let message = Message {
+			index: 0,
 			date: datetime!(2022-06-01 13:45 -5),
 			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
 		};
 
 		let message2 = Message {
+			index: 2,
+			date: datetime!(2022-06-01 14:15 -5),
+			content: String::from("Looky here another message!"),
+		};
+
+		let expected =
+			"-= Hey, I'm a title! =-\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500 (2)\nLooky here another message!\n.\n";
+
+		let mut ood = Oodle::new("Hey, I'm a title!", "/tmp/nothing.oodle", message);
+		ood.push_message(message2);
+
+		assert_eq!(format!("{}", ood), expected)
+	}
+
+	#[test]
+	fn oodle_parses_correctly() {
+		let message = Message {
+			index: 0,
+			date: datetime!(2022-06-01 13:45 -5),
+			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
+		};
+
+		let message2 = Message {
+			index: 1,
 			date: datetime!(2022-06-01 14:15 -5),
 			content: String::from("Looky here another message!"),
 		};
