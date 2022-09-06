@@ -4,6 +4,7 @@ use std::{
 	str::FromStr,
 };
 
+use serde::{ser::SerializeStruct, Serialize};
 use time::{format_description::FormatItem, macros::format_description, OffsetDateTime, UtcOffset};
 use tokio::{fs::File, io::AsyncWriteExt};
 
@@ -28,20 +29,28 @@ impl Oodle {
 	}
 
 	pub fn push_message(&mut self, mut msg: Message) {
-		let idx = self.messages.last().map(|m| m.index + 1).unwrap_or(0);
+		let idx = self.messages.last().map(|m| m.id + 1).unwrap_or(0);
 
-		if msg.index > 0 {
+		if msg.id > 0 {
 			// Message declared it's own index
-			if msg.index < idx {
+			if msg.id < idx {
 				// but our index is bigger?? ignore the message index.
-				msg.index = idx;
+				msg.id = idx;
 			}
 		} else {
 			// they were the first index or were not declared. either way we can set to 0
-			msg.index = idx;
+			msg.id = idx;
 		}
 
 		self.messages.push(msg);
+	}
+
+	pub fn message(&self, index: usize) -> Option<&Message> {
+		self.messages.iter().find(|msg| msg.id == index)
+	}
+
+	pub fn message_mut(&mut self, index: usize) -> Option<&mut Message> {
+		self.messages.iter_mut().find(|msg| msg.id == index)
 	}
 
 	pub async fn save(&self) -> Result<(), std::io::Error> {
@@ -78,8 +87,8 @@ impl fmt::Display for Oodle {
 		for msg in &self.messages {
 			// Weird indexes are fixed on write, so we don't have to check low/high here.
 			write!(f, "\n")?;
-			if idx != msg.index {
-				idx = msg.index;
+			if idx != msg.id {
+				idx = msg.id;
 				msg.fmt_with_idx(f)?;
 			} else {
 				write!(f, "{}", msg)?;
@@ -142,7 +151,7 @@ impl FromStr for Oodle {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
-	pub index: usize,
+	pub id: usize,
 	pub date: OffsetDateTime,
 	pub content: String,
 }
@@ -152,7 +161,7 @@ impl Message {
 
 	pub fn new_now<M: Into<String>>(message: M, offset: UtcOffset) -> Self {
 		Self {
-			index: 0,
+			id: 0,
 			date: OffsetDateTime::now_utc().to_offset(offset),
 			content: message.into(),
 		}
@@ -173,7 +182,7 @@ impl Message {
 		write!(f, "{}", self.formatted_date())?;
 
 		if print_index {
-			write!(f, " ({})", self.index)?;
+			write!(f, " ({})", self.id)?;
 		}
 
 		write!(f, "\n")
@@ -245,10 +254,25 @@ impl FromStr for Message {
 		}
 
 		Ok(Self {
-			index: idx.unwrap_or(0),
+			id: idx.unwrap_or(0),
 			date,
 			content: content.trim().to_owned(),
 		})
+	}
+}
+
+impl Serialize for Message {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: serde::Serializer,
+	{
+		let epoch = self.date - OffsetDateTime::UNIX_EPOCH;
+
+		let mut state = serializer.serialize_struct("Message", 3)?;
+		state.serialize_field("id", &self.id)?;
+		state.serialize_field("date", &epoch.whole_seconds())?;
+		state.serialize_field("content", &self.content)?;
+		state.end()
 	}
 }
 
@@ -263,7 +287,7 @@ mod test {
 	#[test]
 	fn message_formats_correctly() {
 		let message = Message {
-			index: 0,
+			id: 0,
 			date: datetime!(2022-06-01 13:45 -5),
 			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
 		};
@@ -277,7 +301,7 @@ mod test {
 	#[test]
 	fn message_parses_correctly() {
 		let message = Message {
-			index: 0,
+			id: 0,
 			date: datetime!(2022-06-01 13:45 -5),
 			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
 		};
@@ -290,13 +314,13 @@ mod test {
 	#[test]
 	fn oodle_formats_correctly() {
 		let message = Message {
-			index: 0,
+			id: 0,
 			date: datetime!(2022-06-01 13:45 -5),
 			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
 		};
 
 		let message2 = Message {
-			index: 1,
+			id: 1,
 			date: datetime!(2022-06-01 14:15 -5),
 			content: String::from("Looky here another message!"),
 		};
@@ -313,13 +337,13 @@ mod test {
 	#[test]
 	fn oodle_format_index_jump_correctly() {
 		let message = Message {
-			index: 0,
+			id: 0,
 			date: datetime!(2022-06-01 13:45 -5),
 			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
 		};
 
 		let message2 = Message {
-			index: 2,
+			id: 2,
 			date: datetime!(2022-06-01 14:15 -5),
 			content: String::from("Looky here another message!"),
 		};
@@ -336,13 +360,13 @@ mod test {
 	#[test]
 	fn oodle_parses_correctly() {
 		let message = Message {
-			index: 0,
+			id: 0,
 			date: datetime!(2022-06-01 13:45 -5),
 			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
 		};
 
 		let message2 = Message {
-			index: 1,
+			id: 1,
 			date: datetime!(2022-06-01 14:15 -5),
 			content: String::from("Looky here another message!"),
 		};

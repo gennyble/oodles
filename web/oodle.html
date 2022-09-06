@@ -3,9 +3,16 @@
 <head>
 	{%include common_head.html}
 	<style>
-		main>section {
+		main>section,
+		.ghost {
 			width: 75%;
 			margin: 1rem auto;
+		}
+
+		.ghost {
+			background-color: rgba(51, 170, 136, 0.25);
+			border: 1px dashed #3a8;
+			border-radius: 2px;
 		}
 
 		@media (max-width: 50rem) {
@@ -15,13 +22,21 @@
 			}
 		}
 
-		main button {
+		button.edit {
 			border: none;
 			background-color: inherit;
 			padding: none;
 			margin: none;
 		}
+
+		#cancel-edit-label>button {
+			width: 1.75rem;
+			height: 1.75rem;
+		}
 	</style>
+	{%if-set postpermission}
+	<script src="/oodle.js" defer></script>
+	{%end}
 	<title>{name}</title>
 </head>
 
@@ -32,20 +47,24 @@
 	</header>
 	<main>
 		{%pattern message}
-		<section>
-			<h3>{date} {%if-set postpermission}<button>[edit]</button>{%end}</h3>
+		<section {%if-set postpermission} id="message-{message_id}" {%end}>
+			<h3>{date} {%if-set postpermission}<button message-id="{message_id}" class="edit">[edit]</button>{%end}</h3>
 			<p>
 				{message}
 			</p>
 		</section>
 		{%end}
 		{%if-set postpermission}
-		<form id="new-message" method="post" action="/oodle/message/create">
-			<input type="hidden" id="filename" name="filename" value="{filename}">
+		<section id="form-container">
+			<label id="cancel-edit-label" style="display: none">cancel editing <button
+					id="cancel-edit">X</button></label>
+			<form id="message-form" method="post" action="/oodle/message/create">
+				<input type="hidden" id="filename" name="filename" value="{filename}">
 
-			<textarea form="new-message" id="content" name="content" rows="8" wrap="soft"></textarea>
-			<input type="submit" value="post">
-		</form>
+				<textarea form="message-form" id="content" name="content" rows="8" wrap="soft"></textarea>
+				<input type="submit" id="submit" value="post">
+			</form>
+		</section>
 		{%end}
 	</main>
 </body>

@@ -24,7 +24,7 @@ use time::{
 	macros::{format_description, offset},
 	OffsetDateTime,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 mod config;
 
@@ -51,8 +51,8 @@ async fn main() {
 	);
 
 	let database = Arc::new(Database::get(config.credential_file, config.data_directory));
-	database.create_directories();
-	database.load_oodles().await;
+	database.create_directories().await;
+	database.oodles_mut().await.load_oodles().await;
 
 	let server = Server::bind(&SocketAddr::new(config.address, config.port)).serve(MakeSvc {
 		database: database.clone(),
@@ -78,35 +78,104 @@ fn command_encrypt() -> ! {
 }
 
 #[derive(Debug)]
+struct Oodles {
+	oodle_directory: PathBuf,
+	data: Vec<Oodle>,
+}
+
+impl Oodles {
+	pub fn new<P: Into<PathBuf>>(data_dir: P) -> Self {
+		let mut oodle_directory = data_dir.into();
+		oodle_directory.push("oodles");
+
+		Self {
+			oodle_directory,
+			data: vec![],
+		}
+	}
+
+	pub async fn load_oodles(&mut self) {
+		for entry in std::fs::read_dir(&self.oodle_directory).unwrap() {
+			let oodle = Oodle::read(entry.unwrap().path()).await.unwrap();
+			self.data.push(oodle);
+		}
+	}
+
+	pub async fn new_oodle<T: Into<String>, F: Into<String>>(
+		&mut self,
+		title: T,
+		filename: F,
+		message: Message,
+	) {
+		let mut oodle_path = self.oodle_directory.clone();
+		oodle_path.push(filename.into());
+
+		let oodle = Oodle::new(title, oodle_path, message);
+		oodle.save().await.unwrap();
+
+		self.data.push(oodle);
+	}
+
+	pub async fn oodle_metedata(&self) -> Vec<(String, Option<OffsetDateTime>)> {
+		self.data
+			.iter()
+			.map(|oodle| (oodle.name.to_owned(), oodle.date()))
+			.collect()
+	}
+
+	pub fn get_oodle_by_name<S: AsRef<str>>(&self, name: S) -> Option<&Oodle> {
+		self.data
+			.iter()
+			.find(|&o| o.name.to_lowercase() == name.as_ref().to_lowercase())
+	}
+
+	pub fn oodle_by_file<P: Into<PathBuf>>(&self, file: P) -> Option<&Oodle> {
+		let file = file.into();
+		self.data
+			.iter()
+			.find(|o| o.file.file_name().unwrap() == file.file_name().unwrap())
+	}
+
+	pub fn oodle_by_file_mut<P: Into<PathBuf>>(&mut self, file: P) -> Option<&mut Oodle> {
+		let file = file.into();
+		self.data.iter_mut().find(|o| {
+			println!("{}", o.file.file_name().unwrap().to_string_lossy());
+			o.file.file_name().unwrap() == file.file_name().unwrap()
+		})
+	}
+}
+
+#[derive(Debug)]
 struct Database {
 	data_directory: PathBuf,
 
 	users: RwLock<Users>,
-	oodles: RwLock<Vec<Oodle>>,
+	oodles: RwLock<Oodles>,
 }
 
 impl Database {
 	pub fn get<C: AsRef<Path>, D: Into<PathBuf>>(credentials: C, data_directory: D) -> Self {
+		let data_directory = data_directory.into();
 		Database {
-			data_directory: data_directory.into(),
+			data_directory: data_directory.clone(),
 
 			users: RwLock::new(Users::load_file(credentials)),
-			oodles: RwLock::new(vec![]),
+			oodles: RwLock::new(Oodles::new(&data_directory)),
 		}
 	}
 
-	pub fn create_directories(&self) {
-		if !self.oodle_path().exists() {
-			std::fs::create_dir(self.oodle_path()).unwrap()
+	pub async fn create_directories(&self) {
+		if !self.oodles.read().await.oodle_directory.exists() {
+			std::fs::create_dir(&self.oodles.read().await.oodle_directory).unwrap()
 		}
 	}
 
-	pub async fn load_oodles(&self) {
-		let mut oodles = self.oodles.write().await;
-		for entry in std::fs::read_dir(self.oodle_path()).unwrap() {
-			let oodle = Oodle::read(entry.unwrap().path()).await.unwrap();
-			oodles.push(oodle);
-		}
+	pub async fn oodles(&self) -> RwLockReadGuard<Oodles> {
+		self.oodles.read().await
+	}
+
+	pub async fn oodles_mut(&self) -> RwLockWriteGuard<Oodles> {
+		self.oodles.write().await
 	}
 
 	pub async fn verify_user_login<U: AsRef<str>, P: AsRef<str>>(
@@ -158,48 +227,6 @@ impl Database {
 
 	pub async fn delete_session(&self, sid: String) -> bool {
 		self.users.write().await.delete_session(sid)
-	}
-
-	pub fn oodle_path(&self) -> PathBuf {
-		let mut path = self.data_directory.clone();
-		path.push("oodles");
-		path
-	}
-
-	pub async fn new_oodle<T: Into<String>, F: Into<String>>(
-		&self,
-		title: T,
-		filename: F,
-		message: Message,
-	) {
-		let mut oodle_path = self.oodle_path();
-		oodle_path.push(filename.into());
-
-		let oodle = Oodle::new(title, oodle_path, message);
-		oodle.save().await.unwrap();
-
-		self.oodles.write().await.push(oodle);
-	}
-
-	pub async fn oodle_metedata(&self) -> Vec<(String, Option<OffsetDateTime>)> {
-		self.oodles
-			.read()
-			.await
-			.iter()
-			.map(|oodle| (oodle.name.to_owned(), oodle.date()))
-			.collect()
-	}
-
-	pub async fn get_oodle_by_name<S: AsRef<str>>(&self, name: S) -> Option<Oodle> {
-		self.oodles
-			.read()
-			.await
-			.iter()
-			.find(|&o| {
-				println!("'{}' == '{}'", o.name, name.as_ref());
-				o.name.to_lowercase() == name.as_ref().to_lowercase()
-			})
-			.map(<_>::to_owned)
 	}
 }
 
@@ -361,6 +388,7 @@ impl Svc {
 				Self::index(req, db, session).await
 			}
 			(&Method::GET, "style.css") => file_string_reply("web/style.css").await.unwrap(),
+			(&Method::GET, "oodle.js") => file_string_reply("web/oodle.js").await.unwrap(),
 
 			(&Method::GET, "logo.png") => file_reply("web/logo.png").await.unwrap(),
 			(&Method::GET, "logo.svg") => file_string_reply("web/logo.svg").await.unwrap(),
@@ -385,6 +413,10 @@ impl Svc {
 
 			(&Method::POST, "oodle/create") => Self::oodle_create(req, db, session).await,
 			(&Method::POST, "oodle/message/create") => Self::oodle_message(req, db, session).await,
+			(&Method::POST, "oodle/message/modify") => {
+				Self::oodle_message_modify(req, db, session).await
+			}
+			(&Method::GET, "oodle/message/get") => Self::oodle_message_get(req, db, session).await,
 
 			_ => Response::builder().body(Body::from("404")).unwrap(),
 		}
@@ -410,7 +442,7 @@ impl Svc {
 			tpl.set("postpermission", "true")
 		}
 
-		for (title, datetime) in db.oodle_metedata().await {
+		for (title, datetime) in db.oodles().await.oodle_metedata().await {
 			//TODO: gen- display dates, too
 			let mut pattern = tpl.document.get_pattern("oodle").unwrap();
 			pattern.set("name", title);
@@ -444,7 +476,10 @@ impl Svc {
 
 		//TODO: gen- Assocaite offset with user account.
 		let message = Message::new_now(content, offset!(-5));
-		db.new_oodle(title, filename, message).await;
+		db.oodles_mut()
+			.await
+			.new_oodle(title, filename, message)
+			.await;
 
 		Response::builder()
 			.status(200)
@@ -461,22 +496,27 @@ impl Svc {
 		session: Option<Session>,
 	) -> Response<Body> {
 		println!("Reqested oodle: {}", name);
-		let oodle = db.get_oodle_by_name(name).await.unwrap();
+		let oodles = db.oodles().await;
+		let oodle = oodles.get_oodle_by_name(name).unwrap();
 
 		let mut tpl = Template::file("web/oodle.html").await;
-		tpl.set("name", oodle.name);
+		tpl.set("name", oodle.name.clone());
 
 		if let Some(_session) = session {
 			tpl.set("postpermission", "set");
-			tpl.set("filename", oodle.file.to_string_lossy());
+			tpl.set(
+				"filename",
+				oodle.file.file_name().unwrap().to_string_lossy(),
+			);
 		}
 
-		for msg in oodle.messages {
+		for msg in oodle.messages.iter() {
 			let mut pattern = tpl.document.get_pattern("message").unwrap();
 
 			//TODO: gen- actually format the date
 			pattern.set("date", msg.date.format(DATETIME_FORMAT).unwrap());
 			pattern.set("message", msg.content.replace("\n", "<br>"));
+			pattern.set("message_id", format!("{}", msg.id));
 
 			tpl.document.set_pattern("message", pattern);
 		}
@@ -497,14 +537,64 @@ impl Svc {
 		let filename = query.get_first_value("filename").unwrap();
 
 		let name = {
-			let mut writelock = db.oodles.write().await;
-			let oodle = writelock
-				.iter_mut()
-				.find(|o| o.file.to_string_lossy() == filename)
-				.unwrap();
+			let mut oodles = db.oodles_mut().await;
+			let oodle = oodles.oodle_by_file_mut(filename).unwrap();
 
 			oodle.push_message(Message::new_now(message, offset!(-5)));
 			oodle.save().await.unwrap();
+			oodle.name.clone()
+		};
+
+		Response::builder()
+			.status(200)
+			.header(header::LOCATION, format!("/oodles/{}", name))
+			.status(302)
+			.body(Body::from("Oodle updated! Redirecting back to page"))
+			.unwrap()
+	}
+
+	async fn oodle_message_get(
+		mut req: Request<Body>,
+		db: Arc<Database>,
+		session: Option<Session>,
+	) -> Response<Body> {
+		//TODO: gen- check the user actually has permission to get this message!
+		let body = req.uri().query().unwrap();
+		let query: Query = body.parse().unwrap();
+
+		let filename = query.get_first_value("filename").unwrap();
+		let message_id: usize = query.parse_first_value("id").unwrap().unwrap();
+
+		let oodles = db.oodles().await;
+		let oodle = oodles.oodle_by_file(filename).unwrap();
+		let message = oodle.message(message_id).unwrap();
+
+		Response::builder()
+			.status(200)
+			.header("content-type", "application/json")
+			.body(Body::from(serde_json::to_string(message).unwrap()))
+			.unwrap()
+	}
+
+	async fn oodle_message_modify(
+		mut req: Request<Body>,
+		db: Arc<Database>,
+		session: Option<Session>,
+	) -> Response<Body> {
+		//TODO: gen- check the user actually has permission to add a message!
+		let body = hyper::body::to_bytes(req.body_mut()).await.unwrap();
+		let query: Query = String::from_utf8_lossy(&body).parse().unwrap();
+
+		let content = query.get_first_value("content").unwrap();
+		let filename = query.get_first_value("filename").unwrap();
+		let message_id: usize = query.parse_first_value("id").unwrap().unwrap();
+
+		let name = {
+			let mut oodles = db.oodles_mut().await;
+			let oodle = oodles.oodle_by_file_mut(filename).unwrap();
+			oodle.message_mut(message_id).unwrap().content = content.to_owned();
+			oodle.save().await.unwrap();
+
 			oodle.name.clone()
 		};
 
