@@ -33,6 +33,27 @@
 			width: 1.75rem;
 			height: 1.75rem;
 		}
+
+		main>section:target {
+			animation-duration: 1s;
+			animation-name: selected;
+		}
+
+		main>section a {
+			color: inherit;
+			text-decoration: none;
+			border-bottom: 1px dashed black;
+		}
+
+		@keyframes selected {
+			from {
+				background-color: aquamarine;
+			}
+
+			to {
+				background-color: none;
+			}
+		}
 	</style>
 	{%if-set postpermission}
 	<script src="/oodle.js" defer></script>
@@ -47,8 +68,9 @@
 	</header>
 	<main>
 		{%pattern message}
-		<section {%if-set postpermission} id="message-{message_id}" {%end}>
-			<h3>{date} {%if-set postpermission}<button message-id="{message_id}" class="edit">[edit]</button>{%end}</h3>
+		<section id="message-{message_id}">
+			<h3><a href="#message-{message_id}">{date}</a> {%if-set postpermission}<button message-id="{message_id}"
+					class="edit">[edit]</button>{%end}</h3>
 			<p>
 				{message}
 			</p>
