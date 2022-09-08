@@ -1,6 +1,8 @@
 # OODLES
 It's not an acronym it's just very loud.
 
+A single user program for writing in a twitter-thread-like way, but more powerful.
+
 ## TODO
 Yeah, I'm putting this in the readme I guess. Anyway we're on a plane and don't want to pay for the WiFi so no GitHub issues for us!
 
