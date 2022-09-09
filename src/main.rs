@@ -27,7 +27,7 @@ mod config;
 mod database;
 
 const DATETIME_FORMAT: &[FormatItem] = format_description!(
-	"[weekday repr:long], [day padding:none] [year repr:full] [hour repr:24]:[minute padding:zero]"
+	"[weekday repr:long], [month repr:long] [day padding:none] [year repr:full] [hour repr:24]:[minute padding:zero]"
 );
 
 #[tokio::main]
