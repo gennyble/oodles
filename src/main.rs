@@ -176,19 +176,10 @@ impl Svc {
 		db: Arc<Database>,
 		session: Option<Session>,
 	) -> Response<Body> {
-		let user_value = session
-			.as_ref()
-			.map(|s| format!("{} <a href='/logout'>(logout)</a>", s.username))
-			.unwrap_or(String::from("<a href='/login'>login</a>"));
-
 		let mut tpl = Template::file("web/index.html").await;
 
-		tpl.set("username", user_value);
-
-		//FIXME: gen- we want bempline to have and `else` for `if-set` so that
-		// the username can remain unset and I don't have to do this
-		if session.is_some() {
-			tpl.set("postpermission", "true")
+		if let Some(sesh) = session {
+			tpl.set("username", sesh.username);
 		}
 
 		for (title, datetime) in db.oodles().await.oodle_metedata().await {
@@ -245,14 +236,15 @@ impl Svc {
 		session: Option<Session>,
 	) -> Response<Body> {
 		println!("Reqested oodle: {}", name);
+
 		let oodles = db.oodles().await;
 		let oodle = oodles.get_oodle_by_name(name).unwrap();
 
 		let mut tpl = Template::file("web/oodle.html").await;
 		tpl.set("name", oodle.name.clone());
 
-		if let Some(_session) = session {
-			tpl.set("postpermission", "set");
+		if let Some(sesh) = session {
+			tpl.set("username", sesh.username);
 			tpl.set(
 				"filename",
 				oodle.file.file_name().unwrap().to_string_lossy(),

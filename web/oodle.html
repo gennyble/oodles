@@ -69,14 +69,14 @@
 	<main>
 		{%pattern message}
 		<section id="message-{message_id}">
-			<h3><a href="#message-{message_id}">{date}</a> {%if-set postpermission}<button message-id="{message_id}"
+			<h3><a href="#message-{message_id}">{date}</a> {%if-set username}<button message-id="{message_id}"
 					class="edit">[edit]</button>{%end}</h3>
 			<p>
 				{message}
 			</p>
 		</section>
 		{%end}
-		{%if-set postpermission}
+		{%if-set username}
 		<section id="form-container">
 			<label id="cancel-edit-label" style="display: none">cancel editing <button
 					id="cancel-edit">X</button></label>
