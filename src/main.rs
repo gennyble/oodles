@@ -58,6 +58,8 @@ async fn main() {
 		database: database.clone(),
 	});
 
+	println!("Listening on http://{}:{}", config.address, config.port);
+
 	server.await.unwrap();
 }
 
