@@ -8,10 +8,11 @@ use std::{
 
 use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
 use database::Session;
-use hyper::{header, service::Service, Body, Method, Request, Response, Server};
+use form::QueryWrapper;
+use hyper::{header, service::Service, Body, Method, Response, Server, StatusCode};
 use mavourings::{
 	file_reply, file_string_reply,
-	query::{self, Query},
+	query::{self, Query, QueryParseError},
 	template::Template,
 };
 use oodles::Message;
@@ -25,6 +26,7 @@ use crate::database::Database;
 
 mod config;
 mod database;
+mod form;
 
 const DATETIME_FORMAT: &[FormatItem] = format_description!(
 	"[weekday repr:long], [month repr:long] [day padding:none] [year repr:full] [hour repr:24]:[minute padding:zero]"
@@ -95,11 +97,44 @@ impl<T> Service<T> for MakeSvc {
 	}
 }
 
+pub struct Request {
+	pub inner: hyper::Request<Body>,
+}
+
+impl Request {
+	pub fn method(&self) -> &Method {
+		self.inner.method()
+	}
+
+	pub fn path(&self) -> &str {
+		self.inner.uri().path()
+	}
+
+	pub fn query(&self) -> Option<Result<Query, QueryParseError>> {
+		self.inner.uri().query().map(|q| q.parse())
+	}
+
+	pub async fn body_query(self) -> Result<Query, QueryParseError> {
+		self.into_string_body().await.parse()
+	}
+
+	pub async fn into_string_body(mut self) -> String {
+		let body = hyper::body::to_bytes(self.inner.body_mut()).await.unwrap();
+		String::from_utf8_lossy(&body).into_owned()
+	}
+}
+
+impl From<hyper::Request<Body>> for Request {
+	fn from(inner: hyper::Request<Body>) -> Self {
+		Self { inner }
+	}
+}
+
 struct Svc {
 	database: Arc<Database>,
 }
 
-impl Service<Request<Body>> for Svc {
+impl Service<hyper::Request<Body>> for Svc {
 	type Response = Response<Body>;
 	type Error = &'static str;
 	type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -108,42 +143,45 @@ impl Service<Request<Body>> for Svc {
 		Poll::Ready(Ok(()))
 	}
 
-	fn call(&mut self, req: Request<Body>) -> Self::Future {
+	fn call(&mut self, req: hyper::Request<Body>) -> Self::Future {
 		let db = self.database.clone();
-		Box::pin(async { Ok(Self::task(req, db).await) })
+		Box::pin(async { Ok(Self::task(req.into(), db).await) })
 	}
 }
 
 impl Svc {
-	async fn task(req: Request<Body>, db: Arc<Database>) -> Response<Body> {
+	async fn task(req: Request, db: Arc<Database>) -> Response<Body> {
 		let path = req
+			.inner
 			.uri()
 			.path()
 			.trim_end_matches("/")
 			.trim_start_matches("/")
 			.to_owned();
 
-		let session = db.get_session(&req).await;
+		let session = db.get_session(&req.inner).await;
 
-		if req.method() == Method::GET {
+		let response = if req.method() == Method::GET {
 			if let Some(name) = path.strip_prefix("oodles/") {
 				let name = query::Query::url_decode(name, false).unwrap();
-				return Self::oodle_view(req, db, name, session).await;
+				Self::oodle_view(req, db, name, session).await
+			} else {
+				Err(StatusCode::NOT_FOUND)
 			}
-		}
+		} else {
+			match (req.method(), path.as_str()) {
+				(&Method::GET, "") | (&Method::GET, "index.html") => {
+					Ok(Self::index(req, db, session).await)
+				}
+				(&Method::GET, "style.css") => {
+					Ok(file_string_reply("web/style.css").await.unwrap())
+				}
+				(&Method::GET, "oodle.js") => Ok(file_string_reply("web/oodle.js").await.unwrap()),
 
-		match (req.method(), path.as_str()) {
-			(&Method::GET, "") | (&Method::GET, "index.html") => {
-				Self::index(req, db, session).await
-			}
-			(&Method::GET, "style.css") => file_string_reply("web/style.css").await.unwrap(),
-			(&Method::GET, "oodle.js") => file_string_reply("web/oodle.js").await.unwrap(),
+				(&Method::GET, "logo.png") => Ok(file_reply("web/logo.png").await.unwrap()),
+				(&Method::GET, "logo.svg") => Ok(file_string_reply("web/logo.svg").await.unwrap()),
 
-			(&Method::GET, "logo.png") => file_reply("web/logo.png").await.unwrap(),
-			(&Method::GET, "logo.svg") => file_string_reply("web/logo.svg").await.unwrap(),
-
-			(&Method::GET, "login") => {
-				if session.is_some() {
+				(&Method::GET, "login") => Ok(if session.is_some() {
 					Response::builder()
 						.header("Location", "/")
 						.status(302)
@@ -154,25 +192,37 @@ impl Svc {
 						.await
 						.as_response()
 						.unwrap()
+				}),
+
+				(&Method::POST, "login") => Self::user_login(req, db).await,
+				(&Method::GET, "logout") => Self::user_logout(req, db, session).await,
+
+				(&Method::POST, "oodle/create") => Self::oodle_create(req, db, session).await,
+				(&Method::POST, "oodle/message/create") => {
+					Self::oodle_message(req, db, session).await
 				}
+				(&Method::POST, "oodle/message/modify") => {
+					Self::oodle_message_modify(req, db, session).await
+				}
+				(&Method::GET, "oodle/message/get") => {
+					Self::oodle_message_get(req, db, session).await
+				}
+
+				_ => Err(StatusCode::NOT_FOUND),
 			}
+		};
 
-			(&Method::POST, "login") => Self::user_login(req, db).await,
-			(&Method::GET, "logout") => Self::user_logout(req, db, session).await,
-
-			(&Method::POST, "oodle/create") => Self::oodle_create(req, db, session).await,
-			(&Method::POST, "oodle/message/create") => Self::oodle_message(req, db, session).await,
-			(&Method::POST, "oodle/message/modify") => {
-				Self::oodle_message_modify(req, db, session).await
-			}
-			(&Method::GET, "oodle/message/get") => Self::oodle_message_get(req, db, session).await,
-
-			_ => Response::builder().body(Body::from("404")).unwrap(),
+		match response {
+			Ok(response) => response,
+			Err(status) => Response::builder()
+				.status(status)
+				.body(Body::from(format!("{}", status.as_str())))
+				.unwrap(),
 		}
 	}
 
 	async fn index(
-		mut _req: Request<Body>,
+		mut _req: Request,
 		db: Arc<Database>,
 		session: Option<Session>,
 	) -> Response<Body> {
@@ -200,41 +250,35 @@ impl Svc {
 	}
 
 	async fn oodle_create(
-		mut req: Request<Body>,
+		req: Request,
 		db: Arc<Database>,
 		session: Option<Session>,
-	) -> Response<Body> {
+	) -> Result<Response<Body>, StatusCode> {
 		//FIXME: gen- check user has rights to make an oodle
-		let body = hyper::body::to_bytes(req.body_mut()).await.unwrap();
-		let body_string = String::from_utf8_lossy(&body);
-		println!("{}", body_string);
-		let query: Query = body_string.parse().unwrap();
-
-		let title = query.get_first_value("title").unwrap();
-		let filename = query.get_first_value("filename").unwrap();
-		let content = query.get_first_value("firstPost").unwrap();
+		let form = form::OodleCreate::from_request(req).await?;
 
 		//TODO: gen- Assocaite offset with user account.
-		let message = Message::new_now(content, offset!(-5));
+		let message = Message::new_now(form.content, offset!(-5));
 		db.oodles_mut()
 			.await
-			.new_oodle(title, filename, message)
+			.new_oodle(form.title, form.filename, message)
 			.await;
 
-		Response::builder()
+		Ok(Response::builder()
 			.status(200)
 			.header(header::LOCATION, "/")
 			.status(302)
 			.body(Body::from("Login success! Redirecting to home."))
-			.unwrap()
+			.unwrap())
 	}
 
+	//TODO: gen- Error handling
 	async fn oodle_view(
-		mut req: Request<Body>,
+		req: Request,
 		db: Arc<Database>,
 		name: String,
 		session: Option<Session>,
-	) -> Response<Body> {
+	) -> Result<Response<Body>, StatusCode> {
 		println!("Reqested oodle: {}", name);
 
 		let oodles = db.oodles().await;
@@ -262,136 +306,137 @@ impl Svc {
 			tpl.document.set_pattern("message", pattern);
 		}
 
-		tpl.as_response().unwrap()
+		Ok(tpl.as_response().unwrap())
 	}
 
 	async fn oodle_message(
-		mut req: Request<Body>,
+		req: Request,
 		db: Arc<Database>,
 		session: Option<Session>,
-	) -> Response<Body> {
+	) -> Result<Response<Body>, StatusCode> {
 		//TODO: gen- check the user actually has permission to add a message!
-		let body = hyper::body::to_bytes(req.body_mut()).await.unwrap();
-		let query: Query = String::from_utf8_lossy(&body).parse().unwrap();
-
-		let message = query.get_first_value("content").unwrap();
-		let filename = query.get_first_value("filename").unwrap();
+		let form = form::MessageCreate::from_request(req).await?;
 
 		let name = {
 			let mut oodles = db.oodles_mut().await;
-			let oodle = oodles.oodle_by_file_mut(filename).unwrap();
+			let oodle = oodles
+				.oodle_by_file_mut(form.filename)
+				.ok_or(StatusCode::NOT_FOUND)?;
 
-			oodle.push_message(Message::new_now(message, offset!(-5)));
-			oodle.save().await.unwrap();
+			oodle.push_message(Message::new_now(form.content, offset!(-5)));
+			oodle
+				.save()
+				.await
+				.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 			oodle.name.clone()
 		};
 
-		Response::builder()
+		Ok(Response::builder()
 			.status(200)
 			.header(header::LOCATION, format!("/oodles/{}", name))
 			.status(302)
 			.body(Body::from("Oodle updated! Redirecting back to page"))
-			.unwrap()
+			.unwrap())
 	}
 
 	async fn oodle_message_get(
-		mut req: Request<Body>,
+		req: Request,
 		db: Arc<Database>,
 		session: Option<Session>,
-	) -> Response<Body> {
+	) -> Result<Response<Body>, StatusCode> {
 		//TODO: gen- check the user actually has permission to get this message!
-		let body = req.uri().query().unwrap();
-		let query: Query = body.parse().unwrap();
-
-		let filename = query.get_first_value("filename").unwrap();
-		let message_id: usize = query.parse_first_value("id").unwrap().unwrap();
+		let query = QueryWrapper::from_uri_query(&req)?;
+		let filename = query.get_first_value("filename")?;
+		let message_id: usize = query.parse_first_value("id")?;
 
 		let oodles = db.oodles().await;
-		let oodle = oodles.oodle_by_file(filename).unwrap();
-		let message = oodle.message(message_id).unwrap();
+		let oodle = oodles
+			.oodle_by_file(filename)
+			.ok_or(StatusCode::NOT_FOUND)?;
+		let message = oodle.message(message_id).ok_or(StatusCode::NOT_FOUND)?;
 
-		Response::builder()
+		Ok(Response::builder()
 			.status(200)
 			.header("content-type", "application/json")
 			.body(Body::from(serde_json::to_string(message).unwrap()))
-			.unwrap()
+			.unwrap())
 	}
 
 	async fn oodle_message_modify(
-		mut req: Request<Body>,
+		req: Request,
 		db: Arc<Database>,
 		session: Option<Session>,
-	) -> Response<Body> {
+	) -> Result<Response<Body>, StatusCode> {
 		//TODO: gen- check the user actually has permission to add a message!
-		let body = hyper::body::to_bytes(req.body_mut()).await.unwrap();
-		let query: Query = String::from_utf8_lossy(&body).parse().unwrap();
-
-		let content = query.get_first_value("content").unwrap();
-		let filename = query.get_first_value("filename").unwrap();
-		let message_id: usize = query.parse_first_value("id").unwrap().unwrap();
+		let form = form::MessageModify::from_request(req).await?;
 
 		let name = {
 			let mut oodles = db.oodles_mut().await;
-			let oodle = oodles.oodle_by_file_mut(filename).unwrap();
-			oodle.message_mut(message_id).unwrap().content = content.to_owned();
-			oodle.save().await.unwrap();
+			let oodle = oodles
+				.oodle_by_file_mut(form.filename)
+				.ok_or(StatusCode::NOT_FOUND)?;
+
+			oodle
+				.message_mut(form.message_id)
+				.ok_or(StatusCode::NOT_FOUND)?
+				.content = form.content;
+
+			oodle
+				.save()
+				.await
+				.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
 			oodle.name.clone()
 		};
 
-		Response::builder()
+		Ok(Response::builder()
 			.status(200)
 			.header(header::LOCATION, format!("/oodles/{}", name))
 			.status(302)
 			.body(Body::from("Oodle updated! Redirecting back to page"))
-			.unwrap()
+			.unwrap())
 	}
 
-	async fn user_login(mut req: Request<Body>, db: Arc<Database>) -> Response<Body> {
-		let body = hyper::body::to_bytes(req.body_mut()).await.unwrap();
-		let query: Query = String::from_utf8_lossy(&body).parse().unwrap();
-
-		let username = query.get_first_value("username").unwrap();
-		let password = query.get_first_value("password").unwrap();
+	async fn user_login(req: Request, db: Arc<Database>) -> Result<Response<Body>, StatusCode> {
+		let form = form::Login::from_request(req).await?;
 
 		let builder = Response::builder().status(200);
 
-		if db.verify_user_login(username, password).await {
-			let session = db.new_user_session(username).await;
+		Ok(
+			if db.verify_user_login(&form.username, &form.password).await {
+				let session = db.new_user_session(form.username).await;
 
-			builder
-				.header(header::SET_COOKIE, session.get_set_cookie())
-				.header(header::LOCATION, "/")
-				.status(302)
-				.body(Body::from("Login success! Redirecting to home."))
-		} else {
-			builder.body(Body::from("INVALID username or password"))
-		}
-		.unwrap()
+				builder
+					.header(header::SET_COOKIE, session.get_set_cookie())
+					.header(header::LOCATION, "/")
+					.status(302)
+					.body(Body::from("Login success! Redirecting to home."))
+			} else {
+				builder.body(Body::from("INVALID username or password"))
+			}
+			.unwrap(),
+		)
 	}
 
 	async fn user_logout(
-		_req: Request<Body>,
+		_req: Request,
 		db: Arc<Database>,
 		session: Option<Session>,
-	) -> Response<Body> {
+	) -> Result<Response<Body>, StatusCode> {
 		if session.is_none() {
-			return Response::builder()
-				.status(500)
-				.body(Body::from("No session cookie set! How did you get here?"))
-				.unwrap();
+			return Err(StatusCode::BAD_REQUEST);
 		}
 
 		let session = session.unwrap();
 		let clear = session.get_clear_cookie();
 		db.delete_session(session.cookie).await;
 
-		Response::builder()
+		Ok(Response::builder()
 			.status(302)
 			.header(header::SET_COOKIE, clear)
 			.header(header::LOCATION, "/")
 			.status(302)
 			.body(Body::from("Logged out, redirecting home."))
-			.unwrap()
+			.unwrap())
 	}
 }
