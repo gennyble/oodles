@@ -163,55 +163,49 @@ impl Svc {
 
 		let session = db.get_session(&req.inner).await;
 
-		let response = if req.method() == Method::GET {
-			if let Some(name) = path.strip_prefix("oodles/") {
-				let name = query::Query::url_decode(name, false).unwrap();
-				Self::oodle_view(req, db, name, session).await
+		let response = match (req.method(), path.as_str()) {
+			(&Method::GET, "") | (&Method::GET, "index.html") => {
+				Ok(Self::index(req, db, session).await)
+			}
+			(&Method::GET, "style.css") => Ok(file_string_reply("web/style.css").await.unwrap()),
+			(&Method::GET, "oodle.js") => Ok(file_string_reply("web/oodle.js").await.unwrap()),
+
+			(&Method::GET, "logo.png") => Ok(file_reply("web/logo.png").await.unwrap()),
+			(&Method::GET, "logo.svg") => Ok(file_string_reply("web/logo.svg").await.unwrap()),
+
+			(&Method::GET, "login") => Ok(if session.is_some() {
+				Response::builder()
+					.header("Location", "/")
+					.status(302)
+					.body(Body::default())
+					.unwrap()
 			} else {
-				Err(StatusCode::NOT_FOUND)
+				Template::file("web/login.html")
+					.await
+					.as_response()
+					.unwrap()
+			}),
+
+			(&Method::POST, "login") => Self::user_login(req, db).await,
+			(&Method::GET, "logout") => Self::user_logout(req, db, session).await,
+
+			(&Method::POST, "oodle/create") => Self::oodle_create(req, db, session).await,
+			(&Method::POST, "oodle/message/create") => Self::oodle_message(req, db, session).await,
+			(&Method::POST, "oodle/message/modify") => {
+				Self::oodle_message_modify(req, db, session).await
 			}
-		} else {
-			match (req.method(), path.as_str()) {
-				(&Method::GET, "") | (&Method::GET, "index.html") => {
-					Ok(Self::index(req, db, session).await)
-				}
-				(&Method::GET, "style.css") => {
-					Ok(file_string_reply("web/style.css").await.unwrap())
-				}
-				(&Method::GET, "oodle.js") => Ok(file_string_reply("web/oodle.js").await.unwrap()),
+			(&Method::GET, "oodle/message/get") => Self::oodle_message_get(req, db, session).await,
 
-				(&Method::GET, "logo.png") => Ok(file_reply("web/logo.png").await.unwrap()),
-				(&Method::GET, "logo.svg") => Ok(file_string_reply("web/logo.svg").await.unwrap()),
-
-				(&Method::GET, "login") => Ok(if session.is_some() {
-					Response::builder()
-						.header("Location", "/")
-						.status(302)
-						.body(Body::default())
-						.unwrap()
+			(&Method::GET, _) => {
+				if let Some(name) = path.strip_prefix("oodles/") {
+					let name = query::Query::url_decode(name, false).unwrap();
+					Self::oodle_view(req, db, name, session).await
 				} else {
-					Template::file("web/login.html")
-						.await
-						.as_response()
-						.unwrap()
-				}),
-
-				(&Method::POST, "login") => Self::user_login(req, db).await,
-				(&Method::GET, "logout") => Self::user_logout(req, db, session).await,
-
-				(&Method::POST, "oodle/create") => Self::oodle_create(req, db, session).await,
-				(&Method::POST, "oodle/message/create") => {
-					Self::oodle_message(req, db, session).await
+					Err(StatusCode::NOT_FOUND)
 				}
-				(&Method::POST, "oodle/message/modify") => {
-					Self::oodle_message_modify(req, db, session).await
-				}
-				(&Method::GET, "oodle/message/get") => {
-					Self::oodle_message_get(req, db, session).await
-				}
-
-				_ => Err(StatusCode::NOT_FOUND),
 			}
+
+			_ => Err(StatusCode::NOT_FOUND),
 		};
 
 		match response {
