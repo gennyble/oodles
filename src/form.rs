@@ -50,7 +50,7 @@ impl MessageCreate {
 	pub async fn from_request(req: Request) -> Result<Self, StatusCode> {
 		let query = QueryWrapper::from_post_body(req).await?;
 		let filename = query.get_first_value("filename")?;
-		let content = query.get_first_value("firstPost")?;
+		let content = query.get_first_value("content")?;
 
 		Ok(Self { filename, content })
 	}
