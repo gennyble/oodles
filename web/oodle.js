@@ -1,13 +1,12 @@
-function setupButtons() {
-	let buttons = document.getElementsByClassName('edit');
+function setupButtons(doc) {
+	let buttons = doc.getElementsByClassName('edit');
 
 	for (let edit of buttons) {
 		edit.addEventListener('click', editClicked);
 	}
-
-	document.getElementById('cancel-edit').addEventListener('click', function () { clearEdit(); resetForm(); });
 }
-setupButtons()
+setupButtons(document);
+document.getElementById('cancel-edit').addEventListener('click', function () { clearEdit(); resetForm(); });
 
 let main = document.getElementsByTagName('main')[0];
 
@@ -20,11 +19,15 @@ let messageIdInput = undefined;
 let editingId = undefined;
 let ghost = undefined;
 
+messageForm.addEventListener('submit', postMessage);
+
 function editMessage(messageId) {
 	if (messageId == undefined) {
 		clearEdit();
 		return;
 	}
+
+	messageForm.removeEventListener('submit', postMessage);
 
 	editingId = messageId;
 
@@ -59,6 +62,7 @@ function clearEdit() {
 	let messageSection = document.getElementById(`message-${editingId}`);
 	messageSection.style.display = "";
 	main.removeChild(ghost);
+	messageForm.addEventListener('submit', postMessage);
 }
 
 function resetForm() {
@@ -74,3 +78,30 @@ function editClicked(e) {
 	editMessage(messageId);
 }
 
+/* Post message dynamically */
+
+function postMessage(event) {
+	event.stopPropagation();
+	event.preventDefault();
+
+	const jsonData = { 'filename': oodleFilename, 'content': document.getElementById('content').value };
+
+	fetch('/oodle/message/create?json', {
+		method: 'POST',
+		headers: {
+			'Content-Type': "application/json"
+		},
+		body: JSON.stringify(jsonData)
+	})
+		.then((response) => response.text())
+		.then((body) => {
+			let doc = new DOMParser().parseFromString(body, "text/html");
+
+			setupButtons(doc);
+
+			let our = doc.body.firstChild;
+			main.insertBefore(our, document.getElementById('form-container'));
+
+			document.getElementById('content').value = '';
+		})
+}
