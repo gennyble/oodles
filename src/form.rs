@@ -90,7 +90,10 @@ impl QueryWrapper {
 	pub async fn from_post_body(req: Request) -> Result<Self, StatusCode> {
 		req.body_query()
 			.await
-			.map_err(|_| StatusCode::BAD_REQUEST)
+			.map_err(|e| {
+				println!("query parse failed? {}", e);
+				StatusCode::BAD_REQUEST
+			})
 			.map(|q| q.into())
 	}
 
