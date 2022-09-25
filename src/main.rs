@@ -17,6 +17,7 @@ use mavourings::{
 };
 use oodles::Message;
 use rand::rngs::OsRng;
+use serde::{de::DeserializeOwned, Deserialize};
 use time::{
 	format_description::FormatItem,
 	macros::{format_description, offset},
@@ -123,6 +124,11 @@ impl Request {
 	pub async fn into_string_body(mut self) -> String {
 		let body = hyper::body::to_bytes(self.inner.body_mut()).await.unwrap();
 		String::from_utf8_lossy(&body).into_owned()
+	}
+
+	pub async fn json<T: DeserializeOwned>(mut self) -> Result<T, serde_json::Error> {
+		let body = hyper::body::to_bytes(self.inner.body_mut()).await.unwrap();
+		serde_json::from_slice(&body)
 	}
 }
 
@@ -310,29 +316,69 @@ impl Svc {
 		db: Arc<Database>,
 		session: Option<Session>,
 	) -> Result<Response<Body>, StatusCode> {
-		//TODO: gen- check the user actually has permission to add a message!
-		let form = form::MessageCreate::from_request(req).await?;
+		let query: Query = req.query().unwrap().unwrap();
+		if query.has_bool("json") {
+			let json: MessageJson = req.json().await.map_err(|_| StatusCode::BAD_REQUEST)?;
 
-		let name = {
-			let mut oodles = db.oodles_mut().await;
-			let oodle = oodles
-				.oodle_by_file_mut(form.filename)
-				.ok_or(StatusCode::NOT_FOUND)?;
+			let tpl = {
+				let mut oodles = db.oodles_mut().await;
+				let oodle = oodles
+					.oodle_by_file_mut(json.filename)
+					.ok_or(StatusCode::NOT_FOUND)?;
 
-			oodle.push_message(Message::new_now(form.content, offset!(-5)));
-			oodle
-				.save()
-				.await
-				.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-			oodle.name.clone()
-		};
+				let message = Message::new_now(json.content, offset!(-5));
 
-		Ok(Response::builder()
-			.status(200)
-			.header(header::LOCATION, format!("/oodles/{}", name))
-			.status(302)
-			.body(Body::from("Oodle updated! Redirecting back to page"))
-			.unwrap())
+				let mut tpl = Template::file("web/oodle_message.html").await;
+
+				if let Some(se) = session {
+					tpl.set("username", se.username);
+				}
+
+				tpl.set("message", &message.content);
+				tpl.set("date", message.date.format(DATETIME_FORMAT).unwrap());
+
+				oodle.push_message(message);
+
+				tpl.set(
+					"message_id",
+					format!("{}", oodle.messages.last().unwrap().id),
+				);
+
+				oodle
+					.save()
+					.await
+					.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+				tpl
+			};
+
+			tpl.as_response()
+				.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+		} else {
+			//TODO: gen- check the user actually has permission to add a message!
+			let form = form::MessageCreate::from_request(req).await?;
+
+			let name = {
+				let mut oodles = db.oodles_mut().await;
+				let oodle = oodles
+					.oodle_by_file_mut(form.filename)
+					.ok_or(StatusCode::NOT_FOUND)?;
+
+				oodle.push_message(Message::new_now(form.content, offset!(-5)));
+				oodle
+					.save()
+					.await
+					.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+				oodle.name.clone()
+			};
+
+			Ok(Response::builder()
+				.status(200)
+				.header(header::LOCATION, format!("/oodles/{}", name))
+				.status(302)
+				.body(Body::from("Oodle updated! Redirecting back to page"))
+				.unwrap())
+		}
 	}
 
 	async fn oodle_message_get(
@@ -435,4 +481,10 @@ impl Svc {
 			.body(Body::from("Logged out, redirecting home."))
 			.unwrap())
 	}
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageJson {
+	filename: String,
+	content: String,
 }

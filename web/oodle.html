@@ -68,13 +68,7 @@
 	</header>
 	<main>
 		{%pattern message}
-		<section id="message-{message_id}">
-			<h3><a href="#message-{message_id}">{date}</a> {%if-set username}<button message-id="{message_id}"
-					class="edit">[edit]</button>{%end}</h3>
-			<p>
-				{message}
-			</p>
-		</section>
+		{%include oodle_message.html}
 		{%end}
 		{%if-set username}
 		<section id="form-container">

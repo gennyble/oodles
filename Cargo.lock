@@ -28,8 +28,6 @@ checksum = "dea908e7347a8c64e378c17e30ef880ad73e3b4498346b055c2c00ea342f3179"
 [[package]]
 name = "bempline"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "287a6b33a4705f73caa6f093de30b6b387b2bb22e1f0b85cb18d02c34d81b538"
 
 [[package]]
 name = "blake2"
