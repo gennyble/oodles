@@ -334,7 +334,7 @@ impl Svc {
 					tpl.set("username", se.username);
 				}
 
-				tpl.set("message", &message.content);
+				tpl.set("message", message.content.replace("\n", "<br>"));
 				tpl.set("date", message.date.format(DATETIME_FORMAT).unwrap());
 
 				oodle.push_message(message);
