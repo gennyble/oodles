@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use hyper::StatusCode;
 use mavourings::query::Query;
+use serde::Deserialize;
 
 use crate::Request;
 
@@ -41,6 +42,7 @@ impl OodleCreate {
 	}
 }
 
+#[derive(Debug, Deserialize)]
 pub struct MessageCreate {
 	pub filename: String,
 	pub content: String,
@@ -56,6 +58,7 @@ impl MessageCreate {
 	}
 }
 
+#[derive(Debug, Deserialize)]
 pub struct MessageModify {
 	pub filename: String,
 	pub message_id: usize,

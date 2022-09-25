@@ -28,7 +28,7 @@ impl Oodle {
 		}
 	}
 
-	pub fn push_message(&mut self, mut msg: Message) {
+	pub fn push_message(&mut self, mut msg: Message) -> usize {
 		let idx = self.messages.last().map(|m| m.id + 1).unwrap_or(0);
 
 		if msg.id > 0 {
@@ -42,7 +42,10 @@ impl Oodle {
 			msg.id = idx;
 		}
 
+		let id = msg.id;
 		self.messages.push(msg);
+
+		id
 	}
 
 	pub fn message(&self, index: usize) -> Option<&Message> {

@@ -318,7 +318,8 @@ impl Svc {
 	) -> Result<Response<Body>, StatusCode> {
 		let query: Query = req.query().unwrap().unwrap();
 		if query.has_bool("json") {
-			let json: MessageJson = req.json().await.map_err(|_| StatusCode::BAD_REQUEST)?;
+			let json: form::MessageCreate =
+				req.json().await.map_err(|_| StatusCode::BAD_REQUEST)?;
 
 			let tpl = {
 				let mut oodles = db.oodles_mut().await;
@@ -337,12 +338,9 @@ impl Svc {
 				tpl.set("message", message.content.replace("\n", "<br>"));
 				tpl.set("date", message.date.format(DATETIME_FORMAT).unwrap());
 
-				oodle.push_message(message);
+				let id = oodle.push_message(message);
 
-				tpl.set(
-					"message_id",
-					format!("{}", oodle.messages.last().unwrap().id),
-				);
+				tpl.set("message_id", format!("{}", id));
 
 				oodle
 					.save()
@@ -481,10 +479,4 @@ impl Svc {
 			.body(Body::from("Logged out, redirecting home."))
 			.unwrap())
 	}
-}
-
-#[derive(Debug, Deserialize)]
-struct MessageJson {
-	filename: String,
-	content: String,
 }
