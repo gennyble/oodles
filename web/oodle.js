@@ -1,3 +1,15 @@
+const postAction = "/oodle/message/create?json";
+const editAction = "/oodle/message/modify?json";
+
+const main = document.getElementsByTagName('main')[0];
+const messageForm = document.getElementById("message-form");
+const cancelEditLabel = document.getElementById('cancel-edit-label');
+const contentTextarea = document.getElementById('content');
+const submitButton = document.getElementById("submit");
+const oodleFilename = document.getElementById("filename").value;
+
+/// Look for elements with the 'edit' class in the supplied node and add the
+/// proper event listener
 function setupButtons(doc) {
 	let buttons = doc.getElementsByClassName('edit');
 
@@ -6,28 +18,29 @@ function setupButtons(doc) {
 	}
 }
 setupButtons(document);
-document.getElementById('cancel-edit').addEventListener('click', function () { clearEdit(); resetForm(); });
+document.getElementById('cancel-edit').addEventListener('click', function () { clearEdit(); });
 
-let main = document.getElementsByTagName('main')[0];
-
-let messageForm = document.getElementById("message-form");
-let cancelEditLabel = document.getElementById('cancel-edit-label');
-let submitButton = document.getElementById("submit");
-let oodleFilename = document.getElementById("filename").value;
 let messageIdInput = undefined;
-
 let editingId = undefined;
-let ghost = undefined;
+let savedPost = undefined;
 
-messageForm.addEventListener('submit', postMessage);
+messageForm.addEventListener('submit', formSubmit);
 
-function editMessage(messageId) {
+function editClicked(e) {
+	let messageId = e.target.getAttribute('message-id');
+	setupEdit(messageId);
+}
+
+function clearEdit() {
+	setForm(postAction);
+	ghost(undefined);
+}
+
+function setupEdit(messageId) {
 	if (messageId == undefined) {
 		clearEdit();
 		return;
 	}
-
-	messageForm.removeEventListener('submit', postMessage);
 
 	editingId = messageId;
 
@@ -35,50 +48,65 @@ function editMessage(messageId) {
 		filename: oodleFilename,
 		id: messageId
 	})).then((response) => response.json()).then((data) => {
-		document.getElementById('content').value = data.content;
+		savedPost = contentTextarea.value;
+		contentTextarea.value = data.content;
 	});
 
-	messageForm.action = "/oodle/message/modify";
-	submitButton.value = "edit";
-	cancelEditLabel.style.display = "";
-
-	messageIdInput = document.createElement('input');
-	messageIdInput.type = "hidden";
-	messageIdInput.name = "id";
-	messageIdInput.value = messageId;
-	messageForm.appendChild(messageIdInput);
+	setForm(editAction, messageId);
 
 	let messageSection = document.getElementById(`message-${messageId}`);
-
-	ghost = document.createElement('div');
-	ghost.className = "ghost";
-	ghost.style.height = messageSection.clientHeight + "px";
-
-	main.insertBefore(ghost, messageSection);
-	messageSection.style.display = "none";
+	ghost(messageSection);
 }
 
-function clearEdit() {
-	let messageSection = document.getElementById(`message-${editingId}`);
-	messageSection.style.display = "";
-	main.removeChild(ghost);
-	messageForm.addEventListener('submit', postMessage);
+let ghostedElement = undefined;
+let ghostElement = undefined;
+
+function ghost(element) {
+	if (ghostedElement != undefined) {
+		ghostedElement.style.display = "";
+		ghostedElement.parentElement.removeChild(ghostElement);
+		ghostElement = undefined;
+	}
+
+	if (element != undefined && element !== ghostedElement) {
+		ghostElement = document.createElement('div');
+		ghostElement.className = "ghost";
+		ghostElement.style.height = element.clientHeight + "px";
+
+		element.parentElement.insertBefore(ghostElement, element);
+		element.style.display = "none";
+	}
+
+	ghostedElement = element;
 }
 
-function resetForm() {
-	messageForm.action = "/oodle/message/create";
-	submitButton.value = "post";
-	messageForm.removeChild(messageIdInput);
-	cancelEditLabel.style.display = "none";
-	document.getElementById('content').value = "";
+function setForm(action, messageId) {
+	messageForm.action = action;
+
+	if (action == editAction) {
+		submitButton.value = "edit";
+		cancelEditLabel.style.display = "";
+
+		messageIdInput = document.createElement('input');
+		messageIdInput.type = "hidden";
+		messageIdInput.name = "id";
+		messageIdInput.value = messageId;
+		messageForm.appendChild(messageIdInput);
+	} else {
+		submitButton.value = "post";
+		cancelEditLabel.style.display = "none";
+		messageForm.removeChild(messageIdInput);
+		contentTextarea.value = savedPost;
+	}
 }
 
-function editClicked(e) {
-	let messageId = e.target.getAttribute('message-id');
-	editMessage(messageId);
+function formSubmit(event) {
+	if (messageForm.getAttribute('action') == postAction) {
+		postMessage(event);
+	} else {
+		editMessage(event);
+	}
 }
-
-/* Post message dynamically */
 
 function postMessage(event) {
 	event.stopPropagation();
@@ -86,7 +114,7 @@ function postMessage(event) {
 
 	const jsonData = { 'filename': oodleFilename, 'content': document.getElementById('content').value };
 
-	fetch('/oodle/message/create?json', {
+	fetch(postAction, {
 		method: 'POST',
 		headers: {
 			'Content-Type': "application/json"
@@ -103,5 +131,34 @@ function postMessage(event) {
 			main.insertBefore(our, document.getElementById('form-container'));
 
 			document.getElementById('content').value = '';
+		})
+}
+
+function editMessage(event) {
+	event.stopPropagation();
+	event.preventDefault();
+
+	const jsonData = { 'filename': oodleFilename, 'content': document.getElementById('content').value, "id": parseInt(editingId, 10) };
+
+	fetch(editAction, {
+		method: 'POST',
+		headers: {
+			'Content-Type': "application/json"
+		},
+		body: JSON.stringify(jsonData)
+	})
+		.then((response) => response.text())
+		.then((body) => {
+			let doc = new DOMParser().parseFromString(body, "text/html");
+
+			setupButtons(doc);
+
+			let our = doc.body.firstChild;
+			main.insertBefore(our, ghostedElement);
+			main.removeChild(ghostedElement);
+
+			ghostedElement = our;
+
+			clearEdit();
 		})
 }

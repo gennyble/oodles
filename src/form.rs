@@ -61,7 +61,7 @@ impl MessageCreate {
 #[derive(Debug, Deserialize)]
 pub struct MessageModify {
 	pub filename: String,
-	pub message_id: usize,
+	pub id: usize,
 	pub content: String,
 }
 
@@ -69,12 +69,12 @@ impl MessageModify {
 	pub async fn from_request(req: Request) -> Result<Self, StatusCode> {
 		let query = QueryWrapper::from_post_body(req).await?;
 		let filename = query.get_first_value("filename")?;
-		let message_id = query.parse_first_value("id")?;
+		let id = query.parse_first_value("id")?;
 		let content = query.get_first_value("content")?;
 
 		Ok(Self {
 			filename,
-			message_id,
+			id,
 			content,
 		})
 	}

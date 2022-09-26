@@ -430,9 +430,7 @@ impl Svc {
 					.ok_or(StatusCode::NOT_FOUND)?;
 
 				let tpl = {
-					let msg = oodle
-						.message_mut(json.message_id)
-						.ok_or(StatusCode::NOT_FOUND)?;
+					let msg = oodle.message_mut(json.id).ok_or(StatusCode::NOT_FOUND)?;
 					msg.content = json.content;
 					Self::render_message(msg).await
 				};
@@ -461,7 +459,7 @@ impl Svc {
 					.ok_or(StatusCode::NOT_FOUND)?;
 
 				oodle
-					.message_mut(form.message_id)
+					.message_mut(form.id)
 					.ok_or(StatusCode::NOT_FOUND)?
 					.content = form.content;
 
