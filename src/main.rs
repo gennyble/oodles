@@ -17,7 +17,7 @@ use mavourings::{
 };
 use oodles::Message;
 use rand::rngs::OsRng;
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::de::DeserializeOwned;
 use time::{
 	format_description::FormatItem,
 	macros::{format_description, offset},
@@ -340,7 +340,7 @@ impl Svc {
 
 				let id = oodle.push_message(message);
 
-				tpl.set("message_id", format!("{}", id));
+				tpl.set("message_id", id);
 
 				oodle
 					.save()
@@ -402,39 +402,84 @@ impl Svc {
 			.unwrap())
 	}
 
+	async fn render_message(message: &Message) -> Template {
+		let mut tpl = Template::file("web/oodle_message.html").await;
+
+		tpl.set("message", message.content.replace("\n", "<br>"));
+		tpl.set("date", message.date.format(DATETIME_FORMAT).unwrap());
+		tpl.set("message_id", message.id);
+
+		tpl
+	}
+
 	async fn oodle_message_modify(
 		req: Request,
 		db: Arc<Database>,
 		session: Option<Session>,
 	) -> Result<Response<Body>, StatusCode> {
 		//TODO: gen- check the user actually has permission to add a message!
-		let form = form::MessageModify::from_request(req).await?;
+		let query: Query = req.query().unwrap().unwrap();
+		if query.has_bool("json") {
+			let json: form::MessageModify =
+				req.json().await.map_err(|_| StatusCode::BAD_REQUEST)?;
 
-		let name = {
-			let mut oodles = db.oodles_mut().await;
-			let oodle = oodles
-				.oodle_by_file_mut(form.filename)
-				.ok_or(StatusCode::NOT_FOUND)?;
+			let mut tpl = {
+				let mut oodles = db.oodles_mut().await;
+				let oodle = oodles
+					.oodle_by_file_mut(json.filename)
+					.ok_or(StatusCode::NOT_FOUND)?;
 
-			oodle
-				.message_mut(form.message_id)
-				.ok_or(StatusCode::NOT_FOUND)?
-				.content = form.content;
+				let tpl = {
+					let msg = oodle
+						.message_mut(json.message_id)
+						.ok_or(StatusCode::NOT_FOUND)?;
+					msg.content = json.content;
+					Self::render_message(msg).await
+				};
 
-			oodle
-				.save()
-				.await
-				.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+				oodle
+					.save()
+					.await
+					.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-			oodle.name.clone()
-		};
+				tpl
+			};
 
-		Ok(Response::builder()
-			.status(200)
-			.header(header::LOCATION, format!("/oodles/{}", name))
-			.status(302)
-			.body(Body::from("Oodle updated! Redirecting back to page"))
-			.unwrap())
+			if let Some(se) = session {
+				tpl.set("username", se.username);
+			}
+
+			tpl.as_response()
+				.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+		} else {
+			let form = form::MessageModify::from_request(req).await?;
+
+			let name = {
+				let mut oodles = db.oodles_mut().await;
+				let oodle = oodles
+					.oodle_by_file_mut(form.filename)
+					.ok_or(StatusCode::NOT_FOUND)?;
+
+				oodle
+					.message_mut(form.message_id)
+					.ok_or(StatusCode::NOT_FOUND)?
+					.content = form.content;
+
+				oodle
+					.save()
+					.await
+					.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+				oodle.name.clone()
+			};
+
+			Ok(Response::builder()
+				.status(200)
+				.header(header::LOCATION, format!("/oodles/{}", name))
+				.status(302)
+				.body(Body::from("Oodle updated! Redirecting back to page"))
+				.unwrap())
+		}
 	}
 
 	async fn user_login(req: Request, db: Arc<Database>) -> Result<Response<Body>, StatusCode> {
