@@ -27,9 +27,8 @@ checksum = "dea908e7347a8c64e378c17e30ef880ad73e3b4498346b055c2c00ea342f3179"
 
 [[package]]
 name = "bempline"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09d01c34cab76cd1a0e495230014f66509290d25141e859f47c43886866ce480"
+version = "0.9.0"
+source = "git+https://github.com/gennyble/bempline#8c88a1e8917acdda2b578878f6c3f5cdba65504c"
 
 [[package]]
 name = "blake2"
@@ -302,9 +301,11 @@ dependencies = [
 name = "mavourings"
 version = "0.1.0"
 dependencies = [
+ "argon2",
  "bempline",
  "hyper",
  "mime_guess",
+ "rand",
  "thiserror",
  "time",
  "tokio",

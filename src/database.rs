@@ -44,7 +44,7 @@ impl Oodles {
 		let mut oodle_path = self.oodle_directory.clone();
 		oodle_path.push(filename.into());
 
-		let oodle = Oodle::new(title, oodle_path, message);
+		let oodle = Oodle::new_noid(title, oodle_path, message);
 		oodle.save().await.unwrap();
 
 		self.data.push(oodle);

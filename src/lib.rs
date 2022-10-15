@@ -10,18 +10,34 @@ use tokio::{fs::File, io::AsyncWriteExt};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Oodle {
+	pub id: String,
 	pub name: String,
 	pub file: PathBuf,
 	pub messages: Vec<Message>,
 }
 
 impl Oodle {
-	pub fn new<N: Into<String>, P: Into<PathBuf>>(
+	pub fn new<I: Into<String>, N: Into<String>, P: Into<PathBuf>>(
+		id: I,
 		name: N,
 		file: P,
 		first_message: Message,
 	) -> Self {
 		Self {
+			id: id.into(),
+			name: name.into(),
+			file: file.into(),
+			messages: vec![first_message],
+		}
+	}
+
+	pub fn new_noid<N: Into<String>, P: Into<PathBuf>>(
+		name: N,
+		file: P,
+		first_message: Message,
+	) -> Self {
+		Self {
+			id: mavourings::users::random_base58(6),
 			name: name.into(),
 			file: file.into(),
 			messages: vec![first_message],
@@ -80,11 +96,22 @@ impl Oodle {
 
 		None
 	}
+
+	fn extract_id(s: &str) -> Option<String> {
+		if let Some(s) = s.strip_prefix("[") {
+			if let Some(title) = s.strip_suffix("]") {
+				return Some(title.to_owned());
+			}
+		}
+
+		None
+	}
 }
 
 impl fmt::Display for Oodle {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "-= {} =-\n", self.name)?;
+		write!(f, "[{}]\n", self.id)?;
 
 		let mut idx = 0;
 		for msg in &self.messages {
@@ -110,10 +137,10 @@ impl FromStr for Oodle {
 	type Err = ();
 
 	fn from_str(mut s: &str) -> Result<Self, Self::Err> {
-		let title = match s.find("\n\n") {
+		let title = match s.find("\n") {
 			Some(idx) => match Self::extract_title(&s[..idx]) {
 				Some(title) => {
-					s = &s[idx + 2..];
+					s = &s[idx + 1..];
 					title
 				}
 				None => {
@@ -127,7 +154,27 @@ impl FromStr for Oodle {
 			}
 		};
 
+		let id = match s.find("\n") {
+			Some(idx) => match Self::extract_id(&s[..idx]) {
+				Some(title) => {
+					s = &s[idx + 1..];
+					Some(title)
+				}
+				None => {
+					//TODO:gen- title malformed
+					todo!()
+				}
+			},
+			None => None,
+		};
+
+		if s.chars().next() == Some('\n') {
+			// Skip it
+			s = &s[1..];
+		}
+
 		let mut oodles = Self {
+			id: id.unwrap_or(mavourings::users::random_base58(6)),
 			name: title,
 			file: PathBuf::from("/tmp"),
 			messages: vec![],
@@ -329,9 +376,9 @@ mod test {
 		};
 
 		let expected =
-			"-= Hey, I'm a title! =-\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500\nLooky here another message!\n.\n";
+			"-= Hey, I'm a title! =-\n[123456]\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500\nLooky here another message!\n.\n";
 
-		let mut ood = Oodle::new("Hey, I'm a title!", "/tmp/nothing.oodle", message);
+		let mut ood = Oodle::new("123456", "Hey, I'm a title!", "/tmp/nothing.oodle", message);
 		ood.push_message(message2);
 
 		assert_eq!(format!("{}", ood), expected)
@@ -352,9 +399,9 @@ mod test {
 		};
 
 		let expected =
-			"-= Hey, I'm a title! =-\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500 (2)\nLooky here another message!\n.\n";
+			"-= Hey, I'm a title! =-\n[abcdef]\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500 (2)\nLooky here another message!\n.\n";
 
-		let mut ood = Oodle::new("Hey, I'm a title!", "/tmp/nothing.oodle", message);
+		let mut ood = Oodle::new("abcdef", "Hey, I'm a title!", "/tmp/nothing.oodle", message);
 		ood.push_message(message2);
 
 		assert_eq!(format!("{}", ood), expected)
@@ -375,9 +422,9 @@ mod test {
 		};
 
 		let expected =
-			"-= Hey, I'm a title! =-\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500\nLooky here another message!\n.\n";
+			"-= Hey, I'm a title! =-\n[ABC123]\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500\nLooky here another message!\n.\n";
 
-		let mut ood = Oodle::new("Hey, I'm a title!", "/tmp", message);
+		let mut ood = Oodle::new("ABC123", "Hey, I'm a title!", "/tmp", message);
 		ood.push_message(message2);
 
 		assert_eq!(Oodle::from_str(expected), Ok(ood))
