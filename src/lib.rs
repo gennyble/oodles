@@ -1,4 +1,6 @@
 use std::{
+	cell::Ref,
+	error::Error,
 	fmt,
 	path::{Path, PathBuf},
 	str::FromStr,
@@ -9,11 +11,18 @@ use time::{format_description::FormatItem, macros::format_description, OffsetDat
 use tokio::{fs::File, io::AsyncWriteExt};
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Backlink {
+	pub oodle_id: String,
+	pub message_id: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Oodle {
 	pub id: String,
 	pub name: String,
 	pub file: PathBuf,
 	pub messages: Vec<Message>,
+	pub backlinks: Vec<Backlink>,
 }
 
 impl Oodle {
@@ -28,6 +37,7 @@ impl Oodle {
 			name: name.into(),
 			file: file.into(),
 			messages: vec![first_message],
+			backlinks: vec![],
 		}
 	}
 
@@ -41,6 +51,7 @@ impl Oodle {
 			name: name.into(),
 			file: file.into(),
 			messages: vec![first_message],
+			backlinks: vec![],
 		}
 	}
 
@@ -178,6 +189,7 @@ impl FromStr for Oodle {
 			name: title,
 			file: PathBuf::from("/tmp"),
 			messages: vec![],
+			backlinks: vec![],
 		};
 
 		loop {
@@ -204,16 +216,55 @@ pub struct Message {
 	pub id: usize,
 	pub date: OffsetDateTime,
 	pub content: String,
+	pub references: Vec<Reference>,
+	pub backlinks: Vec<Backlink>,
 }
 
 impl Message {
 	const TIME_FORMAT: &'static[FormatItem<'static>] = format_description!("[year padding:zero repr:full base:calendar sign:automatic]-[month padding:zero repr:numerical]-[day padding:zero] [hour padding:zero repr:24]:[minute padding:zero]:[second padding:zero][offset_hour padding:zero sign:mandatory][offset_minute padding:zero]");
 
+	pub fn new<M: Into<String>>(id: usize, date: OffsetDateTime, message: M) -> Self {
+		let msg = message.into();
+		Self {
+			id,
+			date,
+			content: msg.clone(),
+			references: Self::find_references(&msg),
+			backlinks: vec![],
+		}
+	}
+
+	//TODO: resolve references
 	pub fn new_now<M: Into<String>>(message: M, offset: UtcOffset) -> Self {
+		let msg = message.into();
 		Self {
 			id: 0,
 			date: OffsetDateTime::now_utc().to_offset(offset),
-			content: message.into(),
+			content: msg.clone(),
+			references: Self::find_references(&msg),
+			backlinks: vec![],
+		}
+	}
+
+	fn find_references(mut s: &str) -> Vec<Reference> {
+		let mut ret = vec![];
+
+		loop {
+			match s.find('{') {
+				None => return ret,
+				Some(start_idx) => match s.find('}') {
+					None => return ret,
+					Some(end_idx) => {
+						let raw = &s[start_idx..end_idx + 1];
+						s = &s[end_idx + 1..];
+						let reference = Reference::from_str(raw);
+
+						if let Ok(r) = reference {
+							ret.push(r);
+						}
+					}
+				},
+			}
 		}
 	}
 
@@ -303,11 +354,7 @@ impl FromStr for Message {
 			}
 		}
 
-		Ok(Self {
-			id: idx.unwrap_or(0),
-			date,
-			content: content.trim().to_owned(),
-		})
+		Ok(Self::new(idx.unwrap_or(0), date, content.trim()))
 	}
 }
 
@@ -326,21 +373,71 @@ impl Serialize for Message {
 	}
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum Reference {
+	Message { oodle_id: String, message_id: usize },
+	Oodle { oodle_id: String },
+	Internal { message_id: usize },
+}
+
+impl fmt::Display for Reference {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Reference::Message {
+				oodle_id,
+				message_id,
+			} => write!(f, "{{{oodle_id}/{message_id}}}"),
+			Reference::Oodle { oodle_id } => write!(f, "{{{oodle_id}}}"),
+			Reference::Internal { message_id } => write!(f, "{{~{message_id}}}"),
+		}
+	}
+}
+
+// This wants clean refernces. Like "{abcdef/4}" or "{~3}" not "also, in {~3}" or just "~3"
+impl FromStr for Reference {
+	type Err = Box<dyn Error>;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		if let Some(internal_with_hanging) = s.strip_prefix("{~") {
+			// Internal message reference
+			let internal = &internal_with_hanging[..internal_with_hanging.len() - 1];
+			let message_id: usize = internal.parse()?;
+			return Ok(Self::Internal { message_id });
+		} else {
+			let full = &s[1..s.len() - 1];
+
+			match full.split_once('/') {
+				None => Ok(Self::Oodle {
+					oodle_id: full.into(),
+				}),
+				Some((oid, mid)) => {
+					let message_id = mid.parse()?;
+
+					Ok(Self::Message {
+						oodle_id: oid.into(),
+						message_id,
+					})
+				}
+			}
+		}
+	}
+}
+
 #[cfg(test)]
 mod test {
 	use std::str::FromStr;
 
-	use time::macros::datetime;
+	use time::macros::{datetime, offset};
 
-	use crate::{Message, Oodle};
+	use crate::{Message, Oodle, Reference};
 
 	#[test]
 	fn message_formats_correctly() {
-		let message = Message {
-			id: 0,
-			date: datetime!(2022-06-01 13:45 -5),
-			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
-		};
+		let message = Message::new(
+			0,
+			datetime!(2022-06-01 13:45 -5),
+			"Line one!\nLine tw- oh no is that a\n.\nIt was!",
+		);
 
 		let expected =
 			"2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n";
@@ -350,11 +447,11 @@ mod test {
 
 	#[test]
 	fn message_parses_correctly() {
-		let message = Message {
-			id: 0,
-			date: datetime!(2022-06-01 13:45 -5),
-			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
-		};
+		let message = Message::new(
+			0,
+			datetime!(2022-06-01 13:45 -5),
+			"Line one!\nLine tw- oh no is that a\n.\nIt was!",
+		);
 
 		let expected = "2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!";
 
@@ -363,17 +460,17 @@ mod test {
 
 	#[test]
 	fn oodle_formats_correctly() {
-		let message = Message {
-			id: 0,
-			date: datetime!(2022-06-01 13:45 -5),
-			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
-		};
+		let message = Message::new(
+			0,
+			datetime!(2022-06-01 13:45 -5),
+			"Line one!\nLine tw- oh no is that a\n.\nIt was!",
+		);
 
-		let message2 = Message {
-			id: 1,
-			date: datetime!(2022-06-01 14:15 -5),
-			content: String::from("Looky here another message!"),
-		};
+		let message2 = Message::new(
+			1,
+			datetime!(2022-06-01 14:15 -5),
+			"Looky here another message!",
+		);
 
 		let expected =
 			"-= Hey, I'm a title! =-\n[123456]\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500\nLooky here another message!\n.\n";
@@ -386,17 +483,17 @@ mod test {
 
 	#[test]
 	fn oodle_format_index_jump_correctly() {
-		let message = Message {
-			id: 0,
-			date: datetime!(2022-06-01 13:45 -5),
-			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
-		};
+		let message = Message::new(
+			0,
+			datetime!(2022-06-01 13:45 -5),
+			"Line one!\nLine tw- oh no is that a\n.\nIt was!",
+		);
 
-		let message2 = Message {
-			id: 2,
-			date: datetime!(2022-06-01 14:15 -5),
-			content: String::from("Looky here another message!"),
-		};
+		let message2 = Message::new(
+			2,
+			datetime!(2022-06-01 14:15 -5),
+			"Looky here another message!",
+		);
 
 		let expected =
 			"-= Hey, I'm a title! =-\n[abcdef]\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500 (2)\nLooky here another message!\n.\n";
@@ -409,17 +506,17 @@ mod test {
 
 	#[test]
 	fn oodle_parses_correctly() {
-		let message = Message {
-			id: 0,
-			date: datetime!(2022-06-01 13:45 -5),
-			content: String::from("Line one!\nLine tw- oh no is that a\n.\nIt was!"),
-		};
+		let message = Message::new(
+			0,
+			datetime!(2022-06-01 13:45 -5),
+			"Line one!\nLine tw- oh no is that a\n.\nIt was!",
+		);
 
-		let message2 = Message {
-			id: 1,
-			date: datetime!(2022-06-01 14:15 -5),
-			content: String::from("Looky here another message!"),
-		};
+		let message2 = Message::new(
+			1,
+			datetime!(2022-06-01 14:15 -5),
+			"Looky here another message!",
+		);
 
 		let expected =
 			"-= Hey, I'm a title! =-\n[ABC123]\n\n2022-06-01 13:45:00-0500\nLine one!\nLine tw- oh no is that a\n..\nIt was!\n.\n\n2022-06-01 14:15:00-0500\nLooky here another message!\n.\n";
@@ -428,5 +525,49 @@ mod test {
 		ood.push_message(message2);
 
 		assert_eq!(Oodle::from_str(expected), Ok(ood))
+	}
+
+	#[test]
+	fn reference_writes_correctly() {
+		let r = Reference::Internal { message_id: 0 };
+		assert_eq!(r.to_string().as_str(), "{~0}");
+
+		let r = Reference::Message {
+			oodle_id: String::from("abcID"),
+			message_id: 0,
+		};
+		assert_eq!(r.to_string().as_str(), "{abcID/0}");
+
+		let r = Reference::Oodle {
+			oodle_id: String::from("abcdefg"),
+		};
+		assert_eq!(r.to_string().as_str(), "{abcdefg}");
+	}
+
+	#[test]
+	fn reference_parses_correctly() {
+		let rp = "{~0}".parse();
+		let r = Reference::Internal { message_id: 0 };
+		assert_eq!(r, rp.unwrap());
+
+		let rp = "{abcID/0}".parse();
+		let r = Reference::Message {
+			oodle_id: String::from("abcID"),
+			message_id: 0,
+		};
+		assert_eq!(r, rp.unwrap());
+
+		let rp = "{abcdefg}".parse();
+		let r = Reference::Oodle {
+			oodle_id: String::from("abcdefg"),
+		};
+		assert_eq!(r, rp.unwrap());
+	}
+
+	#[test]
+	fn message_finds_references() {
+		let msg = Message::new_now("Blh blah!\n{~2}", offset!(-5));
+
+		assert_eq!(msg.references, vec![Reference::Internal { message_id: 2 }]);
 	}
 }

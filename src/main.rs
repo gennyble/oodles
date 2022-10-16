@@ -15,7 +15,7 @@ use mavourings::{
 	query::{self, Query, QueryParseError},
 	template::Template,
 };
-use oodles::Message;
+use oodles::{Backlink, Message};
 use rand::rngs::OsRng;
 use serde::de::DeserializeOwned;
 use time::{
@@ -297,6 +297,12 @@ impl Svc {
 			);
 		}
 
+		for bl in &oodle.backlinks {
+			let mut blt = tpl.get_pattern("oodle_backlinks").unwrap();
+			blt.set("backlink", format!("{}/{}", bl.oodle_id, bl.message_id));
+			tpl.set_pattern("oodle_backlinks", blt);
+		}
+
 		for msg in oodle.messages.iter() {
 			let mut pattern = tpl.document.get_pattern("message").unwrap();
 
@@ -304,6 +310,12 @@ impl Svc {
 			pattern.set("date", msg.date.format(DATETIME_FORMAT).unwrap());
 			pattern.set("message", msg.content.replace("\n", "<br>"));
 			pattern.set("message_id", format!("{}", msg.id));
+
+			for abl in &msg.backlinks {
+				let mut bl = pattern.get_pattern("backlink").unwrap();
+				bl.set("backlink", format!("{}/{}", abl.oodle_id, abl.message_id));
+				pattern.set_pattern("backlink", bl);
+			}
 
 			tpl.document.set_pattern("message", pattern);
 		}
@@ -338,6 +350,8 @@ impl Svc {
 				tpl.set("message", message.content.replace("\n", "<br>"));
 				tpl.set("date", message.date.format(DATETIME_FORMAT).unwrap());
 
+				let refs = message.references.clone();
+				let oid = oodle.id.clone();
 				let id = oodle.push_message(message);
 
 				tpl.set("message_id", id);
@@ -346,6 +360,14 @@ impl Svc {
 					.save()
 					.await
 					.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+				oodles.map_backlinks(
+					Backlink {
+						oodle_id: oid,
+						message_id: id,
+					},
+					&refs,
+				);
 
 				tpl
 			};

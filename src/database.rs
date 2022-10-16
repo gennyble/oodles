@@ -6,7 +6,7 @@ use std::{
 
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use hyper::{header, Request};
-use oodles::{Message, Oodle};
+use oodles::{Backlink, Message, Oodle, Reference};
 use rand::{rngs::OsRng, Rng};
 use time::OffsetDateTime;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -33,6 +33,23 @@ impl Oodles {
 			let oodle = Oodle::read(entry.unwrap().path()).await.unwrap();
 			self.data.push(oodle);
 		}
+
+		let mut refs = vec![];
+		for oodle in &self.data {
+			for msg in &oodle.messages {
+				refs.push((
+					Backlink {
+						oodle_id: oodle.id.clone(),
+						message_id: msg.id,
+					},
+					msg.references.clone(),
+				));
+			}
+		}
+
+		for (bl, rfs) in refs {
+			self.map_backlinks(bl, &rfs);
+		}
 	}
 
 	pub async fn new_oodle<T: Into<String>, F: Into<String>>(
@@ -45,9 +62,19 @@ impl Oodles {
 		oodle_path.push(filename.into());
 
 		let oodle = Oodle::new_noid(title, oodle_path, message);
+		let oid = oodle.id.clone();
 		oodle.save().await.unwrap();
 
 		self.data.push(oodle);
+
+		let refs = self.data.last().unwrap().messages[0].references.clone();
+		self.map_backlinks(
+			Backlink {
+				oodle_id: oid,
+				message_id: 0,
+			},
+			&refs,
+		)
 	}
 
 	pub async fn oodle_metedata(&self) -> Vec<(String, Option<OffsetDateTime>)> {
@@ -61,6 +88,41 @@ impl Oodles {
 		self.data
 			.iter()
 			.find(|&o| o.name.to_lowercase() == name.as_ref().to_lowercase())
+	}
+
+	pub fn get_oodle_by_id_mut<S: AsRef<str>>(&mut self, id: S) -> Option<&mut Oodle> {
+		let id = id.as_ref();
+		self.data.iter_mut().find(|o| o.id == id)
+	}
+
+	pub fn map_backlinks(&mut self, backlink: Backlink, refs: &[Reference]) {
+		for re in refs {
+			match re {
+				Reference::Message {
+					oodle_id,
+					message_id,
+				} => self
+					.get_oodle_by_id_mut(oodle_id)
+					.into_iter()
+					.for_each(|o| {
+						o.message_mut(*message_id)
+							.iter_mut()
+							.for_each(|m| m.backlinks.push(backlink.clone()))
+					}),
+				Reference::Oodle { oodle_id } => self
+					.get_oodle_by_id_mut(oodle_id)
+					.into_iter()
+					.for_each(|o| o.backlinks.push(backlink.clone())),
+				Reference::Internal { message_id } => self
+					.get_oodle_by_id_mut(&backlink.oodle_id)
+					.into_iter()
+					.for_each(|o| {
+						o.message_mut(*message_id)
+							.iter_mut()
+							.for_each(|m| m.backlinks.push(backlink.clone()))
+					}),
+			}
+		}
 	}
 
 	pub fn oodle_by_file<P: Into<PathBuf>>(&self, file: P) -> Option<&Oodle> {

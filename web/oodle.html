@@ -67,6 +67,11 @@
 		<h1>{name}</h1>
 	</header>
 	<main>
+		<ul id="backlinks">
+			{%pattern oodle_backlinks}
+			<li>{backlink}</li>
+			{%end}
+		</ul>
 		{%pattern message}
 		{%include oodle_message.html}
 		{%end}
