@@ -1,5 +1,6 @@
 <?xml version="1.0" standalone="no"?>
-<svg width="128" height="128" version="1.1" xmlns="http://www.w3.org/2000/svg">
-	<circle cx="64" cy="64" r="60" stroke="black" fill="transparent" stroke-width="5"/>
-	<circle cx="64" cy="49" r="45" stroke="black" fill="transparent" stroke-width="5"/>
+<svg width="128" height="128" version="1.1"
+	xmlns="http://www.w3.org/2000/svg">
+	<circle cx="64" cy="64" r="52" stroke="black" fill="transparent" stroke-width="12"/>
+	<circle cx="64" cy="64" r="32" stroke="black" fill="transparent" stroke-width="12"/>
 </svg>
